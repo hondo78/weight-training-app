@@ -1,0 +1,454 @@
+import { useState, useEffect } from 'react';
+import { Play, Square, Plus, Check, Trash2, Timer, ChevronDown, Save } from 'lucide-react';
+
+const API_BASE = '/api';
+
+function SetRow({ set, onUpdate, onDelete }) {
+  const [weight, setWeight] = useState(set.weight_kg || '');
+  const [reps, setReps] = useState(set.reps || '');
+  const [rpe, setRpe] = useState(set.rpe || '');
+
+  const handleSave = () => {
+    onUpdate({
+      ...set,
+      weight_kg: parseFloat(weight) || 0,
+      reps: parseInt(reps) || 0,
+      rpe: parseInt(rpe) || null
+    });
+  };
+
+  return (
+    <div className="flex items-center gap-2 py-2">
+      <span className="w-8 text-center text-iron-500 text-sm font-mono">{set.set_number}</span>
+      <input
+        type="number"
+        placeholder="kg"
+        value={weight}
+        onChange={(e) => setWeight(e.target.value)}
+        onBlur={handleSave}
+        className="input-field w-20 text-center"
+      />
+      <span className="text-iron-600">×</span>
+      <input
+        type="number"
+        placeholder="Wdh"
+        value={reps}
+        onChange={(e) => setReps(e.target.value)}
+        onBlur={handleSave}
+        className="input-field w-16 text-center"
+      />
+      <input
+        type="number"
+        placeholder="RPE"
+        min="1"
+        max="10"
+        value={rpe}
+        onChange={(e) => setRpe(e.target.value)}
+        onBlur={handleSave}
+        className="input-field w-16 text-center text-sm"
+      />
+      <button 
+        onClick={onDelete}
+        className="p-2 text-iron-500 hover:text-red-400 transition-colors"
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
+function ExerciseCard({ exercise, sessionId, onLogAdded }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const loadLogs = async () => {
+    if (!sessionId) return;
+    try {
+      const res = await fetch(`${API_BASE}/sessions/${sessionId}`);
+      const data = await res.json();
+      const exerciseLogs = data.logs?.filter(l => l.exercise_id === exercise.id) || [];
+      setLogs(exerciseLogs);
+    } catch (error) {
+      console.error('Error loading logs:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (isExpanded && sessionId) {
+      loadLogs();
+    }
+  }, [isExpanded, sessionId]);
+
+  const addSet = async () => {
+    if (!sessionId) return;
+    setLoading(true);
+    try {
+      const nextSetNumber = logs.length + 1;
+      const res = await fetch(`${API_BASE}/logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          exercise_id: exercise.id,
+          set_number: nextSetNumber,
+          weight_kg: 0,
+          reps: 0
+        })
+      });
+      const newLog = await res.json();
+      setLogs([...logs, newLog]);
+      onLogAdded?.();
+    } catch (error) {
+      console.error('Error adding set:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateLog = async (log) => {
+    try {
+      await fetch(`${API_BASE}/logs/${log.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          weight_kg: log.weight_kg,
+          reps: log.reps,
+          rpe: log.rpe
+        })
+      });
+    } catch (error) {
+      console.error('Error updating log:', error);
+    }
+  };
+
+  const deleteLog = async (logId) => {
+    try {
+      await fetch(`${API_BASE}/logs/${logId}`, { method: 'DELETE' });
+      setLogs(logs.filter(l => l.id !== logId));
+    } catch (error) {
+      console.error('Error deleting log:', error);
+    }
+  };
+
+  return (
+    <div className="bg-iron-900 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center gap-4 p-4 hover:bg-iron-800/50 transition-colors"
+      >
+        <div className="w-10 h-10 bg-iron-800 rounded-lg flex items-center justify-center">
+          <span className="text-rust-400 font-bold text-sm">{logs.length || 0}</span>
+        </div>
+        <div className="flex-1 text-left">
+          <p className="text-iron-100 font-medium">{exercise.name}</p>
+          <p className="text-iron-500 text-sm">{exercise.muscle_group}</p>
+        </div>
+        <ChevronDown className={`w-5 h-5 text-iron-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isExpanded && (
+        <div className="px-4 pb-4 border-t border-iron-800">
+          <div className="pt-3">
+            {/* Header */}
+            <div className="flex items-center gap-2 py-2 text-iron-500 text-xs uppercase tracking-wider">
+              <span className="w-8 text-center">Set</span>
+              <span className="w-20 text-center">Gewicht</span>
+              <span className="w-4"></span>
+              <span className="w-16 text-center">Wdh</span>
+              <span className="w-16 text-center">RPE</span>
+              <span className="w-8"></span>
+            </div>
+
+            {/* Sets */}
+            {logs.map((log) => (
+              <SetRow
+                key={log.id}
+                set={log}
+                onUpdate={updateLog}
+                onDelete={() => deleteLog(log.id)}
+              />
+            ))}
+
+            {/* Add Set Button */}
+            <button
+              onClick={addSet}
+              disabled={loading || !sessionId}
+              className="w-full mt-2 py-2 border-2 border-dashed border-iron-700 rounded-lg text-iron-400 hover:border-rust-500 hover:text-rust-400 transition-colors flex items-center justify-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Satz hinzufügen
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function Workout() {
+  const [plans, setPlans] = useState([]);
+  const [exercises, setExercises] = useState([]);
+  const [selectedPlan, setSelectedPlan] = useState(null);
+  const [activeSession, setActiveSession] = useState(null);
+  const [sessionExercises, setSessionExercises] = useState([]);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [showExerciseSelector, setShowExerciseSelector] = useState(false);
+  const [recentSessions, setRecentSessions] = useState([]);
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [plansRes, exercisesRes, sessionsRes] = await Promise.all([
+          fetch(`${API_BASE}/plans`),
+          fetch(`${API_BASE}/exercises`),
+          fetch(`${API_BASE}/sessions`)
+        ]);
+        setPlans(await plansRes.json());
+        setExercises(await exercisesRes.json());
+        setRecentSessions((await sessionsRes.json()).slice(0, 10));
+      } catch (error) {
+        console.error('Error loading data:', error);
+      }
+    }
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    let interval;
+    if (activeSession && !activeSession.completed_at) {
+      interval = setInterval(() => {
+        setElapsedTime(prev => prev + 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [activeSession]);
+
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const loadPlanExercises = async (planId) => {
+    try {
+      const res = await fetch(`${API_BASE}/plans/${planId}`);
+      const data = await res.json();
+      setSessionExercises(data.exercises || []);
+    } catch (error) {
+      console.error('Error loading plan:', error);
+    }
+  };
+
+  const startSession = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plan_id: selectedPlan || null,
+          session_date: new Date().toISOString().split('T')[0]
+        })
+      });
+      const session = await res.json();
+      setActiveSession(session);
+      setElapsedTime(0);
+
+      if (selectedPlan) {
+        await loadPlanExercises(selectedPlan);
+      }
+    } catch (error) {
+      console.error('Error starting session:', error);
+    }
+  };
+
+  const completeSession = async () => {
+    if (!activeSession) return;
+    try {
+      await fetch(`${API_BASE}/sessions/${activeSession.id}/complete`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          duration_minutes: Math.round(elapsedTime / 60)
+        })
+      });
+      setActiveSession(null);
+      setSessionExercises([]);
+      setSelectedPlan(null);
+      // Reload sessions
+      const sessionsRes = await fetch(`${API_BASE}/sessions`);
+      setRecentSessions((await sessionsRes.json()).slice(0, 10));
+    } catch (error) {
+      console.error('Error completing session:', error);
+    }
+  };
+
+  const addExerciseToSession = (exercise) => {
+    if (!sessionExercises.find(e => e.exercise_id === exercise.id || e.id === exercise.id)) {
+      setSessionExercises([...sessionExercises, {
+        ...exercise,
+        exercise_id: exercise.id
+      }]);
+    }
+    setShowExerciseSelector(false);
+  };
+
+  // Group exercises by muscle group
+  const groupedExercises = exercises.reduce((acc, ex) => {
+    if (!acc[ex.muscle_group]) acc[ex.muscle_group] = [];
+    acc[ex.muscle_group].push(ex);
+    return acc;
+  }, {});
+
+  return (
+    <div className="p-4 md:p-6 lg:p-8 max-w-4xl mx-auto">
+      <header className="mb-8">
+        <h1 className="font-display text-3xl md:text-4xl font-bold text-iron-100 tracking-wide">
+          Training
+        </h1>
+        <p className="text-iron-500 mt-1">Starte eine neue Session oder dokumentiere dein Training</p>
+      </header>
+
+      {!activeSession ? (
+        <>
+          {/* Start Session Card */}
+          <div className="bg-iron-900 rounded-xl p-6 mb-6">
+            <h2 className="section-title text-iron-400 text-sm mb-4">Neue Session</h2>
+            
+            <div className="mb-4">
+              <label className="block text-iron-400 text-sm mb-2">Trainingsplan (optional)</label>
+              <select
+                value={selectedPlan || ''}
+                onChange={(e) => setSelectedPlan(e.target.value ? parseInt(e.target.value) : null)}
+                className="input-field w-full"
+              >
+                <option value="">Freies Training</option>
+                {plans.map(plan => (
+                  <option key={plan.id} value={plan.id}>{plan.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              onClick={startSession}
+              className="btn-primary w-full flex items-center justify-center gap-2 py-3"
+            >
+              <Play className="w-5 h-5" />
+              Training starten
+            </button>
+          </div>
+
+          {/* Recent Sessions */}
+          <div className="bg-iron-900 rounded-xl p-6">
+            <h2 className="section-title text-iron-400 text-sm mb-4">Letzte Trainings</h2>
+            {recentSessions.length > 0 ? (
+              <div className="space-y-2">
+                {recentSessions.map(session => (
+                  <div key={session.id} className="flex items-center gap-4 p-3 rounded-lg hover:bg-iron-800/50">
+                    <div className="w-12 h-12 bg-iron-800 rounded-lg flex flex-col items-center justify-center">
+                      <span className="text-rust-400 font-display font-bold text-lg leading-none">
+                        {new Date(session.session_date).getDate()}
+                      </span>
+                      <span className="text-iron-500 text-[10px] uppercase">
+                        {new Date(session.session_date).toLocaleDateString('de-DE', { month: 'short' })}
+                      </span>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-iron-100 font-medium">{session.plan_name || 'Freies Training'}</p>
+                      <p className="text-iron-500 text-sm">
+                        {session.duration_minutes ? `${session.duration_minutes} Min` : '-'}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-iron-500 text-center py-4">Noch keine Trainings</p>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Active Session Header */}
+          <div className="bg-gradient-to-r from-rust-600 to-rust-500 rounded-xl p-5 mb-6 animate-pulse-glow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-white/80 text-sm">Aktives Training</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <Timer className="w-5 h-5 text-white" />
+                  <span className="metric-value text-2xl text-white">{formatTime(elapsedTime)}</span>
+                </div>
+              </div>
+              <button
+                onClick={completeSession}
+                className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+              >
+                <Square className="w-4 h-4" />
+                Beenden
+              </button>
+            </div>
+          </div>
+
+          {/* Exercise List */}
+          <div className="space-y-3 mb-4">
+            {sessionExercises.map((exercise, index) => (
+              <ExerciseCard
+                key={exercise.exercise_id || exercise.id}
+                exercise={{
+                  id: exercise.exercise_id || exercise.id,
+                  name: exercise.name,
+                  muscle_group: exercise.muscle_group
+                }}
+                sessionId={activeSession.id}
+              />
+            ))}
+          </div>
+
+          {/* Add Exercise Button */}
+          <button
+            onClick={() => setShowExerciseSelector(true)}
+            className="w-full py-4 border-2 border-dashed border-iron-700 rounded-xl text-iron-400 hover:border-rust-500 hover:text-rust-400 transition-colors flex items-center justify-center gap-2"
+          >
+            <Plus className="w-5 h-5" />
+            Übung hinzufügen
+          </button>
+
+          {/* Exercise Selector Modal */}
+          {showExerciseSelector && (
+            <div className="fixed inset-0 bg-black/60 flex items-end md:items-center justify-center z-50 p-4">
+              <div className="bg-iron-900 rounded-xl w-full max-w-lg max-h-[80vh] overflow-hidden">
+                <div className="p-4 border-b border-iron-700 flex items-center justify-between">
+                  <h3 className="font-display text-lg text-iron-100">Übung wählen</h3>
+                  <button
+                    onClick={() => setShowExerciseSelector(false)}
+                    className="text-iron-400 hover:text-iron-200"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="overflow-y-auto max-h-96 p-4">
+                  {Object.entries(groupedExercises).map(([group, exs]) => (
+                    <div key={group} className="mb-4">
+                      <h4 className="text-iron-500 text-xs uppercase tracking-wider mb-2">{group}</h4>
+                      <div className="space-y-1">
+                        {exs.map(ex => (
+                          <button
+                            key={ex.id}
+                            onClick={() => addExerciseToSession(ex)}
+                            className="w-full text-left p-3 rounded-lg hover:bg-iron-800 transition-colors text-iron-100"
+                          >
+                            {ex.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
