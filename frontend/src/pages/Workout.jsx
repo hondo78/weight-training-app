@@ -61,7 +61,12 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [exerciseStats, setExerciseStats] = useState({ lastWeight: null, maxWeight: null });
+  const [exerciseStats, setExerciseStats] = useState({
+    lastWeight: null,
+    maxWeight: null,
+    maxWeightReps: null,
+    lastSessionMaxWeight: null
+  });
 
   const loadLogs = async () => {
     if (!sessionId) return;
@@ -87,9 +92,21 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
       // Get last weight from history (excluding current session)
       const lastLog = history.find(log => log.session_id !== sessionId && log.weight_kg > 0);
 
+      // Get max weight from last session (excluding current session)
+      const lastSessionLogs = history.filter(log =>
+        log.session_id !== sessionId &&
+        log.session_id === lastLog?.session_id &&
+        log.weight_kg > 0
+      );
+      const lastSessionMax = lastSessionLogs.length > 0
+        ? Math.max(...lastSessionLogs.map(log => log.weight_kg))
+        : null;
+
       setExerciseStats({
         lastWeight: lastLog?.weight_kg || null,
-        maxWeight: records?.max_weight || null
+        maxWeight: records?.max_weight || null,
+        maxWeightReps: records?.reps_at_max || null,
+        lastSessionMaxWeight: lastSessionMax
       });
     } catch (error) {
       console.error('Error loading exercise stats:', error);
@@ -165,23 +182,35 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
         </div>
         <div className="flex-1 text-left">
           <p className="text-iron-100 font-medium">{exercise.name}</p>
-          <div className="flex items-center gap-3 mt-1">
+          {!isExpanded ? (
             <p className="text-iron-500 text-sm">{exercise.muscle_group}</p>
-            {isExpanded && (
-              <div className="flex items-center gap-3 text-xs">
-                {exerciseStats.lastWeight && (
-                  <span className="text-iron-400">
-                    Letztes: <span className="text-iron-300 font-medium">{exerciseStats.lastWeight}kg</span>
-                  </span>
-                )}
-                {exerciseStats.maxWeight && (
-                  <span className="text-iron-400">
-                    Max: <span className="text-rust-400 font-medium">{exerciseStats.maxWeight}kg</span>
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
+          ) : (
+            <div className="mt-1 space-y-1">
+              <p className="text-iron-500 text-sm">{exercise.muscle_group}</p>
+              {(exerciseStats.lastWeight || exerciseStats.lastSessionMaxWeight) && (
+                <div className="flex items-center gap-3 text-xs">
+                  {exerciseStats.lastWeight && (
+                    <span className="text-iron-400">
+                      Letztes: <span className="text-iron-300 font-medium">{exerciseStats.lastWeight}kg</span>
+                    </span>
+                  )}
+                  {exerciseStats.lastSessionMaxWeight && (
+                    <span className="text-iron-400">
+                      Session-Max: <span className="text-iron-300 font-medium">{exerciseStats.lastSessionMaxWeight}kg</span>
+                    </span>
+                  )}
+                </div>
+              )}
+              {exerciseStats.maxWeight && (
+                <div className="text-xs text-iron-400">
+                  Rekord: <span className="text-rust-400 font-medium">{exerciseStats.maxWeight}kg</span>
+                  {exerciseStats.maxWeightReps && (
+                    <span className="text-iron-400"> × {exerciseStats.maxWeightReps} Wdh</span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <ChevronDown className={`w-5 h-5 text-iron-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
       </button>
