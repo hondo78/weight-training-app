@@ -40,7 +40,7 @@ services:
       dockerfile: Dockerfile
     container_name: weight_training_frontend
     ports:
-      - "3000:80"
+      - "3002:80"
     depends_on:
       - backend
     restart: unless-stopped
