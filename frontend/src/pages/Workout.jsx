@@ -327,6 +327,30 @@ export default function Workout() {
     setSessionExercises([]);
   };
 
+  const deleteSession = async (sessionId) => {
+    if (!confirm('Möchtest du dieses Training wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.')) {
+      return;
+    }
+
+    try {
+      await fetch(`${API_BASE}/sessions/${sessionId}`, {
+        method: 'DELETE'
+      });
+
+      // Reload sessions list
+      const sessionsRes = await fetch(`${API_BASE}/sessions`);
+      setRecentSessions((await sessionsRes.json()).slice(0, 10));
+
+      // Close edit mode if this session was being edited
+      if (editSession?.id === sessionId) {
+        closeEditSession();
+      }
+    } catch (error) {
+      console.error('Error deleting session:', error);
+      alert('Fehler beim Löschen des Trainings');
+    }
+  };
+
   // Group exercises by muscle group
   const groupedExercises = exercises.reduce((acc, ex) => {
     if (!acc[ex.muscle_group]) acc[ex.muscle_group] = [];
@@ -378,7 +402,7 @@ export default function Workout() {
             {recentSessions.length > 0 ? (
               <div className="space-y-2">
                 {recentSessions.map(session => (
-                  <div key={session.id} className="flex items-center gap-4 p-3 rounded-lg hover:bg-iron-800/50 transition-colors">
+                  <div key={session.id} className="flex items-center gap-2 p-3 rounded-lg hover:bg-iron-800/50 transition-colors">
                     <div className="w-12 h-12 bg-iron-800 rounded-lg flex flex-col items-center justify-center">
                       <span className="text-rust-400 font-display font-bold text-lg leading-none">
                         {new Date(session.session_date).getDate()}
@@ -393,13 +417,25 @@ export default function Workout() {
                         {session.duration_minutes ? `${session.duration_minutes} Min` : '-'}
                       </p>
                     </div>
-                    <button
-                      onClick={() => loadSessionForEdit(session.id)}
-                      className="p-2 text-iron-400 hover:text-rust-400 transition-colors"
-                      title="Training bearbeiten"
-                    >
-                      <Edit2 className="w-5 h-5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => loadSessionForEdit(session.id)}
+                        className="p-2 text-iron-400 hover:text-rust-400 transition-colors"
+                        title="Training bearbeiten"
+                      >
+                        <Edit2 className="w-5 h-5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteSession(session.id);
+                        }}
+                        className="p-2 text-iron-400 hover:text-red-400 transition-colors"
+                        title="Training löschen"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -419,13 +455,22 @@ export default function Workout() {
                   {editSession.plan_name || 'Freies Training'} • {new Date(editSession.session_date).toLocaleDateString('de-DE')}
                 </p>
               </div>
-              <button
-                onClick={closeEditSession}
-                className="bg-iron-800 hover:bg-iron-700 text-iron-300 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-              >
-                <X className="w-4 h-4" />
-                Schließen
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => deleteSession(editSession.id)}
+                  className="bg-red-900/20 hover:bg-red-900/30 text-red-400 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Löschen
+                </button>
+                <button
+                  onClick={closeEditSession}
+                  className="bg-iron-800 hover:bg-iron-700 text-iron-300 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                  Schließen
+                </button>
+              </div>
             </div>
           </div>
 
