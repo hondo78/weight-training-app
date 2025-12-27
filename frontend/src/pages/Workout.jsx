@@ -402,8 +402,12 @@ export default function Workout() {
             {recentSessions.length > 0 ? (
               <div className="space-y-2">
                 {recentSessions.map(session => (
-                  <div key={session.id} className="flex items-center gap-2 p-3 rounded-lg hover:bg-iron-800/50 transition-colors">
-                    <div className="w-12 h-12 bg-iron-800 rounded-lg flex flex-col items-center justify-center">
+                  <div
+                    key={session.id}
+                    onClick={() => loadSessionForEdit(session.id)}
+                    className="flex items-center gap-2 p-3 rounded-lg hover:bg-iron-800/50 transition-colors cursor-pointer group"
+                  >
+                    <div className="w-12 h-12 bg-iron-800 rounded-lg flex flex-col items-center justify-center group-hover:bg-rust-900/30 transition-colors">
                       <span className="text-rust-400 font-display font-bold text-lg leading-none">
                         {new Date(session.session_date).getDate()}
                       </span>
@@ -412,30 +416,21 @@ export default function Workout() {
                       </span>
                     </div>
                     <div className="flex-1">
-                      <p className="text-iron-100 font-medium">{session.plan_name || 'Freies Training'}</p>
+                      <p className="text-iron-100 font-medium group-hover:text-rust-400 transition-colors">{session.plan_name || 'Freies Training'}</p>
                       <p className="text-iron-500 text-sm">
                         {session.duration_minutes ? `${session.duration_minutes} Min` : '-'}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => loadSessionForEdit(session.id)}
-                        className="p-2 text-iron-400 hover:text-rust-400 transition-colors"
-                        title="Training bearbeiten"
-                      >
-                        <Edit2 className="w-5 h-5" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteSession(session.id);
-                        }}
-                        className="p-2 text-iron-400 hover:text-red-400 transition-colors"
-                        title="Training löschen"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteSession(session.id);
+                      }}
+                      className="p-2 text-iron-400 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Training löschen"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
                   </div>
                 ))}
               </div>
