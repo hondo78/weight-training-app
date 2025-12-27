@@ -226,6 +226,17 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
       {isExpanded && (
         <div className="px-4 pb-4 border-t border-iron-800">
           <div className="pt-3">
+            {/* RPE Legend */}
+            <div className="mb-3 p-2 bg-iron-800/50 rounded-lg">
+              <p className="text-iron-400 text-xs font-medium mb-1">RPE Skala (Rate of Perceived Exertion):</p>
+              <div className="grid grid-cols-2 gap-1 text-[10px] text-iron-500">
+                <span>1-3: Sehr leicht</span>
+                <span>4-6: Moderat</span>
+                <span>7-8: Schwer (2-3 Wdh Reserve)</span>
+                <span>9-10: Maximal (0-1 Wdh Reserve)</span>
+              </div>
+            </div>
+
             {/* Header */}
             <div className="flex items-center gap-2 py-2 text-iron-500 text-xs uppercase tracking-wider">
               <span className="w-8 text-center">Set</span>
