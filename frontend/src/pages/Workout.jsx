@@ -65,6 +65,7 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
     lastWeight: null,
     maxWeight: null,
     maxWeightReps: null,
+    maxWeightDate: null,
     lastSessionMaxWeight: null
   });
 
@@ -102,10 +103,14 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
         ? Math.max(...lastSessionLogs.map(log => log.weight_kg))
         : null;
 
+      // Find the date of max weight
+      const maxWeightLog = history.find(log => log.weight_kg === records?.max_weight);
+
       setExerciseStats({
         lastWeight: lastLog?.weight_kg || null,
         maxWeight: records?.max_weight || null,
         maxWeightReps: records?.reps_at_max || null,
+        maxWeightDate: maxWeightLog?.session_date || null,
         lastSessionMaxWeight: lastSessionMax
       });
     } catch (error) {
@@ -206,6 +211,9 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
                   Rekord: <span className="text-rust-400 font-medium">{exerciseStats.maxWeight}kg</span>
                   {exerciseStats.maxWeightReps && (
                     <span className="text-iron-400"> × {exerciseStats.maxWeightReps} Wdh</span>
+                  )}
+                  {exerciseStats.maxWeightDate && (
+                    <span className="text-iron-500"> • {new Date(exerciseStats.maxWeightDate).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
                   )}
                 </div>
               )}
