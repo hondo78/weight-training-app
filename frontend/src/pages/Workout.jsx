@@ -61,6 +61,7 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [exerciseStats, setExerciseStats] = useState({ lastWeight: null, maxWeight: null });
 
   const loadLogs = async () => {
     if (!sessionId) return;
@@ -74,9 +75,31 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
     }
   };
 
+  const loadExerciseStats = async () => {
+    try {
+      const [historyRes, recordsRes] = await Promise.all([
+        fetch(`${API_BASE}/exercises/${exercise.id}/history`),
+        fetch(`${API_BASE}/exercises/${exercise.id}/records`)
+      ]);
+      const history = await historyRes.json();
+      const records = await recordsRes.json();
+
+      // Get last weight from history (excluding current session)
+      const lastLog = history.find(log => log.session_id !== sessionId && log.weight_kg > 0);
+
+      setExerciseStats({
+        lastWeight: lastLog?.weight_kg || null,
+        maxWeight: records?.max_weight || null
+      });
+    } catch (error) {
+      console.error('Error loading exercise stats:', error);
+    }
+  };
+
   useEffect(() => {
     if (isExpanded && sessionId) {
       loadLogs();
+      loadExerciseStats();
     }
   }, [isExpanded, sessionId]);
 
@@ -142,7 +165,23 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
         </div>
         <div className="flex-1 text-left">
           <p className="text-iron-100 font-medium">{exercise.name}</p>
-          <p className="text-iron-500 text-sm">{exercise.muscle_group}</p>
+          <div className="flex items-center gap-3 mt-1">
+            <p className="text-iron-500 text-sm">{exercise.muscle_group}</p>
+            {isExpanded && (
+              <div className="flex items-center gap-3 text-xs">
+                {exerciseStats.lastWeight && (
+                  <span className="text-iron-400">
+                    Letztes: <span className="text-iron-300 font-medium">{exerciseStats.lastWeight}kg</span>
+                  </span>
+                )}
+                {exerciseStats.maxWeight && (
+                  <span className="text-iron-400">
+                    Max: <span className="text-rust-400 font-medium">{exerciseStats.maxWeight}kg</span>
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <ChevronDown className={`w-5 h-5 text-iron-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
       </button>
