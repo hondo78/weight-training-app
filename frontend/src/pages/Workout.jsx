@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Play, Square, Plus, Check, Trash2, Timer, ChevronDown, Save } from 'lucide-react';
+import { Play, Square, Plus, Check, Trash2, Timer, ChevronDown, Save, Edit2, X } from 'lucide-react';
 
 const API_BASE = '/api';
 
@@ -191,6 +191,7 @@ export default function Workout() {
   const [exercises, setExercises] = useState([]);
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
+  const [editSession, setEditSession] = useState(null);
   const [sessionExercises, setSessionExercises] = useState([]);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showExerciseSelector, setShowExerciseSelector] = useState(false);
@@ -293,6 +294,39 @@ export default function Workout() {
     setShowExerciseSelector(false);
   };
 
+  const loadSessionForEdit = async (sessionId) => {
+    try {
+      const res = await fetch(`${API_BASE}/sessions/${sessionId}`);
+      const data = await res.json();
+      setEditSession(data);
+
+      // Extract unique exercises from logs
+      const uniqueExercises = [];
+      const exerciseIds = new Set();
+
+      data.logs?.forEach(log => {
+        if (!exerciseIds.has(log.exercise_id)) {
+          exerciseIds.add(log.exercise_id);
+          uniqueExercises.push({
+            id: log.exercise_id,
+            exercise_id: log.exercise_id,
+            name: log.exercise_name,
+            muscle_group: log.muscle_group
+          });
+        }
+      });
+
+      setSessionExercises(uniqueExercises);
+    } catch (error) {
+      console.error('Error loading session:', error);
+    }
+  };
+
+  const closeEditSession = () => {
+    setEditSession(null);
+    setSessionExercises([]);
+  };
+
   // Group exercises by muscle group
   const groupedExercises = exercises.reduce((acc, ex) => {
     if (!acc[ex.muscle_group]) acc[ex.muscle_group] = [];
@@ -309,12 +343,12 @@ export default function Workout() {
         <p className="text-iron-500 mt-1">Starte eine neue Session oder dokumentiere dein Training</p>
       </header>
 
-      {!activeSession ? (
+      {!activeSession && !editSession ? (
         <>
           {/* Start Session Card */}
           <div className="bg-iron-900 rounded-xl p-6 mb-6">
             <h2 className="section-title text-iron-400 text-sm mb-4">Neue Session</h2>
-            
+
             <div className="mb-4">
               <label className="block text-iron-400 text-sm mb-2">Trainingsplan (optional)</label>
               <select
@@ -344,7 +378,7 @@ export default function Workout() {
             {recentSessions.length > 0 ? (
               <div className="space-y-2">
                 {recentSessions.map(session => (
-                  <div key={session.id} className="flex items-center gap-4 p-3 rounded-lg hover:bg-iron-800/50">
+                  <div key={session.id} className="flex items-center gap-4 p-3 rounded-lg hover:bg-iron-800/50 transition-colors">
                     <div className="w-12 h-12 bg-iron-800 rounded-lg flex flex-col items-center justify-center">
                       <span className="text-rust-400 font-display font-bold text-lg leading-none">
                         {new Date(session.session_date).getDate()}
@@ -359,6 +393,13 @@ export default function Workout() {
                         {session.duration_minutes ? `${session.duration_minutes} Min` : '-'}
                       </p>
                     </div>
+                    <button
+                      onClick={() => loadSessionForEdit(session.id)}
+                      className="p-2 text-iron-400 hover:text-rust-400 transition-colors"
+                      title="Training bearbeiten"
+                    >
+                      <Edit2 className="w-5 h-5" />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -366,6 +407,52 @@ export default function Workout() {
               <p className="text-iron-500 text-center py-4">Noch keine Trainings</p>
             )}
           </div>
+        </>
+      ) : editSession ? (
+        <>
+          {/* Edit Session Header */}
+          <div className="bg-iron-900 rounded-xl p-5 mb-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-iron-400 text-sm">Training bearbeiten</p>
+                <p className="text-iron-100 font-medium mt-1">
+                  {editSession.plan_name || 'Freies Training'} • {new Date(editSession.session_date).toLocaleDateString('de-DE')}
+                </p>
+              </div>
+              <button
+                onClick={closeEditSession}
+                className="bg-iron-800 hover:bg-iron-700 text-iron-300 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+              >
+                <X className="w-4 h-4" />
+                Schließen
+              </button>
+            </div>
+          </div>
+
+          {/* Exercise List */}
+          <div className="space-y-3 mb-4">
+            {sessionExercises.map((exercise, index) => (
+              <ExerciseCard
+                key={exercise.exercise_id || exercise.id}
+                exercise={{
+                  id: exercise.exercise_id || exercise.id,
+                  name: exercise.name,
+                  muscle_group: exercise.muscle_group
+                }}
+                sessionId={editSession.id}
+                onLogAdded={() => loadSessionForEdit(editSession.id)}
+              />
+            ))}
+          </div>
+
+          {/* Add Exercise Button */}
+          <button
+            onClick={() => setShowExerciseSelector(true)}
+            className="w-full py-4 border-2 border-dashed border-iron-700 rounded-xl text-iron-400 hover:border-rust-500 hover:text-rust-400 transition-colors flex items-center justify-center gap-2"
+          >
+            <Plus className="w-5 h-5" />
+            Übung hinzufügen
+          </button>
         </>
       ) : (
         <>
@@ -413,41 +500,42 @@ export default function Workout() {
             Übung hinzufügen
           </button>
 
-          {/* Exercise Selector Modal */}
-          {showExerciseSelector && (
-            <div className="fixed inset-0 bg-black/60 flex items-end md:items-center justify-center z-50 p-4">
-              <div className="bg-iron-900 rounded-xl w-full max-w-lg max-h-[80vh] overflow-hidden">
-                <div className="p-4 border-b border-iron-700 flex items-center justify-between">
-                  <h3 className="font-display text-lg text-iron-100">Übung wählen</h3>
-                  <button
-                    onClick={() => setShowExerciseSelector(false)}
-                    className="text-iron-400 hover:text-iron-200"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="overflow-y-auto max-h-96 p-4">
-                  {Object.entries(groupedExercises).map(([group, exs]) => (
-                    <div key={group} className="mb-4">
-                      <h4 className="text-iron-500 text-xs uppercase tracking-wider mb-2">{group}</h4>
-                      <div className="space-y-1">
-                        {exs.map(ex => (
-                          <button
-                            key={ex.id}
-                            onClick={() => addExerciseToSession(ex)}
-                            className="w-full text-left p-3 rounded-lg hover:bg-iron-800 transition-colors text-iron-100"
-                          >
-                            {ex.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
         </>
+      )}
+
+      {/* Exercise Selector Modal - Shared between active and edit sessions */}
+      {showExerciseSelector && (activeSession || editSession) && (
+        <div className="fixed inset-0 bg-black/60 flex items-end md:items-center justify-center z-50 p-4">
+          <div className="bg-iron-900 rounded-xl w-full max-w-lg max-h-[80vh] overflow-hidden">
+            <div className="p-4 border-b border-iron-700 flex items-center justify-between">
+              <h3 className="font-display text-lg text-iron-100">Übung wählen</h3>
+              <button
+                onClick={() => setShowExerciseSelector(false)}
+                className="text-iron-400 hover:text-iron-200"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="overflow-y-auto max-h-96 p-4">
+              {Object.entries(groupedExercises).map(([group, exs]) => (
+                <div key={group} className="mb-4">
+                  <h4 className="text-iron-500 text-xs uppercase tracking-wider mb-2">{group}</h4>
+                  <div className="space-y-1">
+                    {exs.map(ex => (
+                      <button
+                        key={ex.id}
+                        onClick={() => addExerciseToSession(ex)}
+                        className="w-full text-left p-3 rounded-lg hover:bg-iron-800 transition-colors text-iron-100"
+                      >
+                        {ex.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
