@@ -283,13 +283,15 @@ app.post('/api/sessions', async (req, res) => {
 
 // Complete session
 app.put('/api/sessions/:id/complete', async (req, res) => {
-  const { duration_minutes, notes } = req.body;
+  const { notes } = req.body;
   try {
     const result = await pool.query(
-      `UPDATE workout_sessions 
-       SET completed_at = CURRENT_TIMESTAMP, duration_minutes = $1, notes = COALESCE($2, notes)
-       WHERE id = $3 RETURNING *`,
-      [duration_minutes, notes, req.params.id]
+      `UPDATE workout_sessions
+       SET completed_at = CURRENT_TIMESTAMP,
+           duration_minutes = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - started_at))::int / 60,
+           notes = COALESCE($1, notes)
+       WHERE id = $2 RETURNING *`,
+      [notes, req.params.id]
     );
     res.json(result.rows[0]);
   } catch (error) {

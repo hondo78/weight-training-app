@@ -310,17 +310,25 @@ export default function Workout() {
 
   useEffect(() => {
     let interval;
-    if (activeSession && !activeSession.completed_at) {
-      interval = setInterval(() => {
-        setElapsedTime(prev => prev + 1);
-      }, 1000);
+    if (activeSession && !activeSession.completed_at && activeSession.started_at) {
+      const updateElapsed = () => {
+        const startedAt = new Date(activeSession.started_at).getTime();
+        const now = Date.now();
+        setElapsedTime(Math.floor((now - startedAt) / 1000));
+      };
+      updateElapsed();
+      interval = setInterval(updateElapsed, 1000);
     }
     return () => clearInterval(interval);
   }, [activeSession]);
 
   const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
+    if (hrs > 0) {
+      return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
@@ -356,19 +364,21 @@ export default function Workout() {
     }
   };
 
-  const completeSession = async () => {
-    if (!activeSession) return;
+  const completeSession = async (sessionId) => {
+    const id = sessionId || activeSession?.id;
+    if (!id) return;
     try {
-      await fetch(`${API_BASE}/sessions/${activeSession.id}/complete`, {
+      await fetch(`${API_BASE}/sessions/${id}/complete`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          duration_minutes: Math.round(elapsedTime / 60)
-        })
+        body: JSON.stringify({})
       });
-      setActiveSession(null);
-      setSessionExercises([]);
-      setSelectedPlan(null);
+      if (!sessionId) {
+        // Completing active session
+        setActiveSession(null);
+        setSessionExercises([]);
+        setSelectedPlan(null);
+      }
       // Reload sessions
       const sessionsRes = await fetch(`${API_BASE}/sessions`);
       setRecentSessions((await sessionsRes.json()).slice(0, 10));
@@ -511,19 +521,36 @@ export default function Workout() {
                     <div className="flex-1">
                       <p className="text-iron-100 font-medium group-hover:text-rust-400 transition-colors">{session.plan_name || 'Freies Training'}</p>
                       <p className="text-iron-500 text-sm">
-                        {session.duration_minutes ? `${session.duration_minutes} Min` : '-'}
+                        {session.completed_at
+                          ? (session.duration_minutes ? `${session.duration_minutes} Min` : 'Abgeschlossen')
+                          : <span className="text-yellow-500">Offen</span>
+                        }
                       </p>
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteSession(session.id);
-                      }}
-                      className="p-2 text-iron-400 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Training löschen"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      {!session.completed_at && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            completeSession(session.id);
+                          }}
+                          className="p-2 text-iron-400 hover:text-green-400 transition-colors opacity-0 group-hover:opacity-100"
+                          title="Training abschließen"
+                        >
+                          <Check className="w-5 h-5" />
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteSession(session.id);
+                        }}
+                        className="p-2 text-iron-400 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                        title="Training löschen"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
