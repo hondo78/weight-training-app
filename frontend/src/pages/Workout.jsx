@@ -119,6 +119,12 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
   };
 
   useEffect(() => {
+    if (sessionId) {
+      loadLogs();
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
     if (isExpanded && sessionId) {
       loadLogs();
       loadExerciseStats();

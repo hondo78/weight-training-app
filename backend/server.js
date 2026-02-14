@@ -243,15 +243,41 @@ app.get('/api/sessions/:id', async (req, res) => {
 // Start new session
 app.post('/api/sessions', async (req, res) => {
   const { plan_id, session_date, notes } = req.body;
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+    const result = await client.query(
       `INSERT INTO workout_sessions (plan_id, session_date, notes)
        VALUES ($1, $2, $3) RETURNING *`,
       [plan_id || null, session_date || new Date().toISOString().split('T')[0], notes || null]
     );
-    res.status(201).json(result.rows[0]);
+    const session = result.rows[0];
+
+    // Auto-create sets from plan exercises
+    if (plan_id) {
+      const planExercises = await client.query(
+        `SELECT exercise_id, target_sets FROM plan_exercises WHERE plan_id = $1 ORDER BY order_index`,
+        [plan_id]
+      );
+      for (const pe of planExercises.rows) {
+        const numSets = pe.target_sets || 3;
+        for (let s = 1; s <= numSets; s++) {
+          await client.query(
+            `INSERT INTO exercise_logs (session_id, exercise_id, set_number, weight_kg, reps)
+             VALUES ($1, $2, $3, 0, 0)`,
+            [session.id, pe.exercise_id, s]
+          );
+        }
+      }
+    }
+
+    await client.query('COMMIT');
+    res.status(201).json(session);
   } catch (error) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 });
 
