@@ -24,8 +24,10 @@ There are no tests and no linter.
 ## Architecture
 
 - **`backend/server.js`** — the entire API in one file: Express + a raw `pg` Pool, hand-written SQL, no ORM, no migration tooling. Multi-statement writes (plan create/update, session create) use an explicit `pool.connect()` + `BEGIN/COMMIT/ROLLBACK` client.
+- **`backup.sh`** + `backup` service — `pg_dump -Fc` into `./backups/` at start and every 24 h, prunes after `BACKUP_KEEP_DAYS`. `./backups` is root-owned and gitignored.
 - **`init.sql`** — schema + seed data (exercise catalog, three sample plans). It runs **only when the `postgres_data` volume is empty**. Schema changes therefore need to be applied to the running DB manually (`ALTER TABLE ...` via psql) *and* added to `init.sql`; `docker compose down -v` resets everything including user data.
-- **`frontend/`** — React 18 + Vite + Tailwind + Recharts + lucide-react. `App.jsx` holds routing and the nav; each route is one self-contained page in `src/pages/` that calls `fetch('/api/...')` directly (each page defines its own `API_BASE = '/api'`; no shared API client or state store). In production, nginx (`frontend/nginx.conf`) serves the SPA and reverse-proxies `/api` to `backend:3001`.
+- **`frontend/`** — React 18 + Vite + Tailwind + Recharts + lucide-react. `App.jsx` holds routing and the nav; each route is one self-contained page in `src/pages/` that calls `fetch('/api/...')` directly (each page defines its own `API_BASE = '/api'`; no shared API client or state store). In production, nginx (`frontend/nginx.conf`) serves the SPA and reverse-proxies `/api` to `backend:3001`. Shared code lives in `src/lib/` (`training.js`: Epley e1RM + double-progression suggestion; `syncQueue.js`: localStorage retry queue for `PUT /api/logs/:id`), `src/components/` (`RestTimer`, `TrainingCalendar`, `WeeklyVolumeChart`) and `src/hooks/useWakeLock.js`.
+- **PWA** — `public/manifest.webmanifest` + hand-written `public/sw.js` (network-first for navigation and `GET /api`, cache-first for hashed `/assets/`). Registered in `main.jsx` only in a secure context, so over plain `http://<LAN-IP>` it is inactive; bump `VERSION` in `sw.js` when changing caching behaviour.
 
 ### Domain model
 
@@ -33,7 +35,8 @@ There are no tests and no linter.
 
 Session lifecycle details that span backend and `Workout.jsx`:
 - `POST /api/sessions` with a `plan_id` pre-creates placeholder sets (`weight_kg=0, reps=0`, `target_sets` per exercise, default 3) inside the same transaction. Queries for history/records/stats should account for these zero-value rows.
-- A session is "open" until `completed_at` is set. The workout timer is computed client-side from the server's `started_at` (not a local counter); `PUT /api/sessions/:id/complete` sets `completed_at` and computes `duration_minutes` server-side. Past open sessions can be completed from the session list.
+- Sets with `reps = 0` are placeholders: history, records, stats and export filter them with `reps > 0`. The rest timer starts when a set goes from 0 to >0 reps, using the plan's `rest_seconds` (free exercises: 90 s).
+- A session is "open" until `completed_at` is set. Open sessions can be resumed as the active workout ("Fortsetzen"). The workout timer is computed client-side from the server's `started_at` (not a local counter); `PUT /api/sessions/:id/complete` sets `completed_at` and computes `duration_minutes` server-side. Past open sessions can be completed from the session list.
 
 ## Conventions
 

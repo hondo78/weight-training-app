@@ -12,6 +12,11 @@ Eine moderne Webapplikation zum Planen und Dokumentieren deines Gewichtstraining
 - **🏃 Übungskatalog** - Vordefinierte Übungen für alle Muskelgruppen + eigene hinzufügen
 - **📈 Fortschritt** - Verfolge deine Entwicklung bei jeder Übung mit Diagrammen
 - **⚖️ Körperdaten** - Tracke Gewicht, Körperfett und Umfänge
+- **⏳ Pausen-Timer** - Startet nach jedem erledigten Satz mit der Pause aus dem Plan (Ton + Vibration)
+- **✨ Gewichtsvorschlag** - Doppelte Progression aus letzter Session, Ziel-Wdh und RPE
+- **📅 Kalender & Wochenvolumen** - Trainingstage als Heatmap, Sätze pro Muskelgruppe und Woche, geschätztes 1RM (Epley)
+- **📱 Als App installierbar** - PWA mit Offline-Shell; Satz-Änderungen werden bei Verbindungsabbruch gepuffert und nachgesendet
+- **💾 Backup & Export** - Tägliches `pg_dump` nach `./backups`, Export aller Daten als CSV/JSON
 
 ## Schnellstart
 
@@ -34,12 +39,39 @@ docker compose up -d
 # pgAdmin:  http://localhost:5052   (nur vom Host aus, ohne Login)
 ```
 
+### Am Handy installieren (PWA)
+
+Service Worker und „Bildschirm anlassen“ funktionieren im Browser nur über
+**HTTPS** (oder `localhost`). Über `http://<LAN-IP>:3002` läuft die App normal,
+ist aber nicht installierbar und nicht offline-fähig. Für die volle App-Funktion
+eine HTTPS-Route im Reverse-Proxy auf Port 3002 anlegen und die Seite dann im
+Handy-Browser über „Zum Startbildschirm hinzufügen“ installieren.
+
+Die Offline-Warteschlange für Satz-Änderungen funktioniert auch ohne HTTPS.
+
+### Backup & Wiederherstellung
+
+Der Container `weight_training_backup` erstellt beim Start und danach alle 24 h
+einen Dump in `./backups/` und löscht Dumps, die älter als 14 Tage sind
+(`BACKUP_KEEP_DAYS`).
+
+```bash
+# Sofort ein Backup erstellen
+docker exec weight_training_backup sh /backup.sh once
+
+# Wiederherstellen (überschreibt die aktuellen Daten!)
+docker exec weight_training_backup sh -c 'pg_restore --clean --if-exists -d weight_training /backups/<datei>.dump'
+```
+
+Zusätzlich gibt es im Dashboard einen Export als CSV (alle Sätze, für Excel)
+und JSON (alle Tabellen).
+
 ### Stoppen
 
 ```bash
 docker compose down
 
-# Mit Datenbank-Reset:
+# Mit Datenbank-Reset (vorher Backup prüfen!):
 docker compose down -v
 ```
 
@@ -122,6 +154,12 @@ weight-training-app/
 ### Statistiken
 - `GET /api/stats/dashboard` - Dashboard-Statistiken
 - `GET /api/stats/muscle-distribution` - Muskelgruppen-Verteilung
+- `GET /api/stats/weekly-volume?weeks=12` - Sätze/Volumen pro Woche und Muskelgruppe
+- `GET /api/stats/calendar?days=182` - Trainingstage für die Kalender-Heatmap
+
+### Export
+- `GET /api/export?format=csv` - Alle Sätze als CSV (Semikolon, Dezimalkomma)
+- `GET /api/export?format=json` - Alle Tabellen als JSON
 
 ## Datenbank-Schema
 

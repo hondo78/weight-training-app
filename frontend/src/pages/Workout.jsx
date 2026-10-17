@@ -1,12 +1,22 @@
-import { useState, useEffect } from 'react';
-import { Play, Square, Plus, Check, Trash2, Timer, ChevronDown, Save, Edit2, X } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Play, Square, Plus, Check, Trash2, Timer, ChevronDown, X, Sparkles, WifiOff, RotateCcw } from 'lucide-react';
+import RestTimer, { unlockAudio } from '../components/RestTimer';
+import useWakeLock from '../hooks/useWakeLock';
+import { putWithRetry, subscribe, pendingCount } from '../lib/syncQueue';
+import { suggestNextWeight, formatKg } from '../lib/training';
 
 const API_BASE = '/api';
 
 function SetRow({ set, onUpdate, onDelete }) {
-  const [weight, setWeight] = useState(set.weight_kg || '');
+  const [weight, setWeight] = useState(parseFloat(set.weight_kg) || '');
   const [reps, setReps] = useState(set.reps || '');
   const [rpe, setRpe] = useState(set.rpe || '');
+
+  useEffect(() => {
+    setWeight(parseFloat(set.weight_kg) || '');
+    setReps(set.reps || '');
+    setRpe(set.rpe || '');
+  }, [set.weight_kg, set.reps, set.rpe]);
 
   const handleSave = () => {
     onUpdate({
@@ -57,7 +67,7 @@ function SetRow({ set, onUpdate, onDelete }) {
   );
 }
 
-function ExerciseCard({ exercise, sessionId, onLogAdded }) {
+function ExerciseCard({ exercise, sessionId, onLogAdded, restSeconds, targetReps, onSetCompleted }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -66,7 +76,9 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
     maxWeight: null,
     maxWeightReps: null,
     maxWeightDate: null,
-    lastSessionMaxWeight: null
+    lastSessionMaxWeight: null,
+    bestE1rm: null,
+    suggestion: null
   });
 
   const loadLogs = async () => {
@@ -89,6 +101,7 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
       ]);
       const history = await historyRes.json();
       const records = await recordsRes.json();
+      const suggestion = suggestNextWeight(history, sessionId, targetReps);
 
       // Get last weight from history (excluding current session)
       const lastLog = history.find(log => log.session_id !== sessionId && log.weight_kg > 0);
@@ -111,7 +124,9 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
         maxWeight: records?.max_weight || null,
         maxWeightReps: records?.reps_at_max || null,
         maxWeightDate: maxWeightLog?.session_date || null,
-        lastSessionMaxWeight: lastSessionMax
+        lastSessionMaxWeight: lastSessionMax,
+        bestE1rm: parseFloat(records?.best_e1rm) || null,
+        suggestion
       });
     } catch (error) {
       console.error('Error loading exercise stats:', error);
@@ -158,19 +173,33 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
   };
 
   const updateLog = async (log) => {
-    try {
-      await fetch(`${API_BASE}/logs/${log.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          weight_kg: log.weight_kg,
-          reps: log.reps,
-          rpe: log.rpe
-        })
-      });
-    } catch (error) {
-      console.error('Error updating log:', error);
+    const previous = logs.find(l => l.id === log.id);
+    const unchanged = previous &&
+      parseFloat(previous.weight_kg) === log.weight_kg &&
+      (parseInt(previous.reps) || 0) === log.reps &&
+      (previous.rpe || null) === log.rpe;
+    if (unchanged) return;
+
+    setLogs(current => current.map(l => (l.id === log.id ? { ...l, ...log } : l)));
+
+    // Satz frisch erledigt (vorher 0 Wdh) → Pausen-Timer starten
+    if (previous && !(parseInt(previous.reps) > 0) && log.reps > 0) {
+      onSetCompleted?.(restSeconds || 90, exercise.name);
     }
+
+    await putWithRetry(`${API_BASE}/logs/${log.id}`, {
+      weight_kg: log.weight_kg,
+      reps: log.reps,
+      rpe: log.rpe
+    });
+  };
+
+  const applySuggestion = () => {
+    const weight = exerciseStats.suggestion?.weight;
+    if (!weight) return;
+    logs
+      .filter(l => !(parseFloat(l.weight_kg) > 0))
+      .forEach(l => updateLog({ ...l, weight_kg: weight, reps: parseInt(l.reps) || 0, rpe: l.rpe || null }));
   };
 
   const deleteLog = async (logId) => {
@@ -221,6 +250,9 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
                   {exerciseStats.maxWeightDate && (
                     <span className="text-iron-500"> • {new Date(exerciseStats.maxWeightDate).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
                   )}
+                  {exerciseStats.bestE1rm && (
+                    <span className="text-iron-400"> • e1RM <span className="text-iron-300 font-medium">{formatKg(exerciseStats.bestE1rm)}kg</span></span>
+                  )}
                 </div>
               )}
             </div>
@@ -232,6 +264,30 @@ function ExerciseCard({ exercise, sessionId, onLogAdded }) {
       {isExpanded && (
         <div className="px-4 pb-4 border-t border-iron-800">
           <div className="pt-3">
+            {/* Progressionsvorschlag */}
+            {exerciseStats.suggestion && (
+              <div className="mb-3 p-3 bg-rust-500/10 border border-rust-500/30 rounded-lg flex items-center gap-3">
+                <Sparkles className="w-4 h-4 text-rust-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-iron-100 text-sm">
+                    Vorschlag: <span className="font-semibold text-rust-400">{formatKg(exerciseStats.suggestion.weight)} kg</span>
+                    <span className="text-iron-400"> × {exerciseStats.suggestion.targetReps} Wdh</span>
+                  </p>
+                  <p className="text-iron-500 text-xs">
+                    {exerciseStats.suggestion.reason} (zuletzt {formatKg(exerciseStats.suggestion.lastWeight)} kg)
+                  </p>
+                </div>
+                {logs.some(l => !(parseFloat(l.weight_kg) > 0)) && (
+                  <button
+                    onClick={applySuggestion}
+                    className="px-3 py-1.5 rounded-lg bg-rust-500 hover:bg-rust-600 text-white text-xs font-medium shrink-0"
+                  >
+                    Übernehmen
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* RPE Legend */}
             <div className="mb-3 p-2 bg-iron-800/50 rounded-lg">
               <p className="text-iron-400 text-xs font-medium mb-1">RPE Skala (Rate of Perceived Exertion):</p>
@@ -289,6 +345,17 @@ export default function Workout() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showExerciseSelector, setShowExerciseSelector] = useState(false);
   const [recentSessions, setRecentSessions] = useState([]);
+  const [restTimer, setRestTimer] = useState(null);
+  const [pendingSync, setPendingSync] = useState(pendingCount());
+
+  useWakeLock(Boolean(activeSession));
+  useEffect(() => subscribe(setPendingSync), []);
+
+  const startRest = useCallback((seconds, label) => {
+    unlockAudio();
+    setRestTimer({ endsAt: Date.now() + seconds * 1000, total: seconds, label });
+  }, []);
+  const closeRest = useCallback(() => setRestTimer(null), []);
 
   useEffect(() => {
     async function loadData() {
@@ -342,6 +409,33 @@ export default function Workout() {
     }
   };
 
+  // Offene Session (z. B. nach Neuladen der Seite) als aktives Training fortsetzen
+  const resumeSession = async (sessionId) => {
+    try {
+      const res = await fetch(`${API_BASE}/sessions/${sessionId}`);
+      const data = await res.json();
+      let planExercises = [];
+      if (data.plan_id) {
+        const planRes = await fetch(`${API_BASE}/plans/${data.plan_id}`);
+        if (planRes.ok) planExercises = (await planRes.json()).exercises || [];
+      }
+      const known = new Set(planExercises.map(e => e.exercise_id));
+      const extra = [];
+      data.logs?.forEach(log => {
+        if (!known.has(log.exercise_id)) {
+          known.add(log.exercise_id);
+          extra.push({ id: log.exercise_id, exercise_id: log.exercise_id, name: log.exercise_name, muscle_group: log.muscle_group });
+        }
+      });
+      setEditSession(null);
+      setSelectedPlan(data.plan_id || null);
+      setSessionExercises([...planExercises, ...extra]);
+      setActiveSession(data);
+    } catch (error) {
+      console.error('Error resuming session:', error);
+    }
+  };
+
   const startSession = async () => {
     try {
       const res = await fetch(`${API_BASE}/sessions`, {
@@ -378,6 +472,7 @@ export default function Workout() {
         setActiveSession(null);
         setSessionExercises([]);
         setSelectedPlan(null);
+        setRestTimer(null);
       }
       // Reload sessions
       const sessionsRes = await fetch(`${API_BASE}/sessions`);
@@ -532,6 +627,19 @@ export default function Workout() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
+                            resumeSession(session.id);
+                          }}
+                          className="px-3 py-1.5 mr-1 rounded-lg bg-rust-500/15 text-rust-400 hover:bg-rust-500/25 text-sm flex items-center gap-1 transition-colors"
+                          title="Als aktives Training fortsetzen"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                          Fortsetzen
+                        </button>
+                      )}
+                      {!session.completed_at && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
                             completeSession(session.id);
                           }}
                           className="p-2 text-iron-400 hover:text-green-400 transition-colors opacity-0 group-hover:opacity-100"
@@ -625,6 +733,12 @@ export default function Workout() {
                   <Timer className="w-5 h-5 text-white" />
                   <span className="metric-value text-2xl text-white">{formatTime(elapsedTime)}</span>
                 </div>
+                {pendingSync > 0 && (
+                  <p className="flex items-center gap-1 text-white/90 text-xs mt-1">
+                    <WifiOff className="w-3.5 h-3.5" />
+                    {pendingSync} {pendingSync === 1 ? 'Satz wartet' : 'Sätze warten'} auf Verbindung
+                  </p>
+                )}
               </div>
               <button
                 onClick={completeSession}
@@ -647,6 +761,9 @@ export default function Workout() {
                   muscle_group: exercise.muscle_group
                 }}
                 sessionId={activeSession.id}
+                restSeconds={exercise.rest_seconds}
+                targetReps={exercise.target_reps}
+                onSetCompleted={startRest}
               />
             ))}
           </div>
@@ -660,6 +777,9 @@ export default function Workout() {
             Übung hinzufügen
           </button>
 
+          {/* Platz für den Pausen-Timer, damit er die letzte Karte nicht verdeckt */}
+          {restTimer && <div className="h-24" />}
+          <RestTimer timer={restTimer} onChange={setRestTimer} onClose={closeRest} />
         </>
       )}
 

@@ -42,6 +42,24 @@ services:
       - backend
     restart: unless-stopped
 
+  backup:
+    image: postgres:16-alpine
+    container_name: weight_training_backup
+    environment:
+      PGHOST: db
+      PGUSER: trainer
+      PGPASSWORD: strongpassword123
+      PGDATABASE: weight_training
+      BACKUP_KEEP_DAYS: 14
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   pgadmin:
     image: dpage/pgadmin4:9.18
     container_name: weight_training_pgadmin

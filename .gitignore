@@ -32,3 +32,6 @@ pgadmin_data/
 
 # OS
 Thumbs.db
+
+# Datenbank-Backups
+backups/

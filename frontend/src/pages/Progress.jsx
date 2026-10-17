@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
-import { TrendingUp, Trophy, Calendar, ChevronDown } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { TrendingUp, Trophy, ChevronDown, Gauge } from 'lucide-react';
+import { Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ComposedChart, Area } from 'recharts';
+import TrainingCalendar from '../components/TrainingCalendar';
+import WeeklyVolumeChart from '../components/WeeklyVolumeChart';
+import { estimateOneRepMax, formatKg } from '../lib/training';
+
+const MAX_COLOR = '#d4622c';
+const E1RM_COLOR = '#3987e5';
 
 const API_BASE = '/api';
 
@@ -25,9 +31,10 @@ function ExerciseProgressCard({ exercise }) {
       const groupedByDate = historyData.reduce((acc, log) => {
         const date = log.session_date;
         if (!acc[date]) {
-          acc[date] = { date, maxWeight: 0, totalVolume: 0, sets: 0 };
+          acc[date] = { date, maxWeight: 0, e1rm: 0, totalVolume: 0, sets: 0 };
         }
         acc[date].maxWeight = Math.max(acc[date].maxWeight, parseFloat(log.weight_kg) || 0);
+        acc[date].e1rm = Math.max(acc[date].e1rm, estimateOneRepMax(log.weight_kg, log.reps));
         acc[date].totalVolume += (parseFloat(log.weight_kg) || 0) * (log.reps || 0);
         acc[date].sets++;
         return acc;
@@ -78,7 +85,7 @@ function ExerciseProgressCard({ exercise }) {
             <>
               {/* Personal Records */}
               {records && records.max_weight && (
-                <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
                   <div className="bg-iron-800 rounded-lg p-3">
                     <div className="flex items-center gap-2 mb-1">
                       <Trophy className="w-4 h-4 text-amber-400" />
@@ -96,6 +103,16 @@ function ExerciseProgressCard({ exercise }) {
                     </div>
                     <p className="metric-value text-xl text-iron-100">{Math.round(records.max_volume_set || 0)} kg</p>
                   </div>
+                  {records.best_e1rm && (
+                    <div className="bg-iron-800 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Gauge className="w-4 h-4 text-steel-400" />
+                        <span className="text-iron-400 text-xs uppercase">Bestes e1RM</span>
+                      </div>
+                      <p className="metric-value text-xl text-iron-100">{formatKg(records.best_e1rm)} kg</p>
+                      <p className="text-iron-500 text-sm">geschätzt (Epley)</p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -103,12 +120,12 @@ function ExerciseProgressCard({ exercise }) {
               {history.length > 0 ? (
                 <div>
                   <h4 className="text-iron-400 text-xs uppercase tracking-wider mb-3">Gewichtsverlauf</h4>
-                  <div className="h-48">
+                  <div className="h-56">
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={history}>
+                      <ComposedChart data={history}>
                         <defs>
                           <linearGradient id={`gradient-${exercise.id}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#d4622c" stopOpacity={0.3}/>
+                            <stop offset="5%" stopColor={MAX_COLOR} stopOpacity={0.3}/>
                             <stop offset="95%" stopColor="#d4622c" stopOpacity={0}/>
                           </linearGradient>
                         </defs>
@@ -130,17 +147,33 @@ function ExerciseProgressCard({ exercise }) {
                             borderRadius: '8px',
                             color: '#f7f7f6'
                           }}
-                          formatter={(value) => [`${value} kg`, 'Max']}
+                          formatter={(value, name) => [`${formatKg(value)} kg`, name]}
                           labelFormatter={(value) => new Date(value).toLocaleDateString('de-DE')}
                         />
-                        <Area 
-                          type="monotone" 
-                          dataKey="maxWeight" 
-                          stroke="#d4622c" 
+                        <Legend
+                          iconType="plainline"
+                          wrapperStyle={{ fontSize: 12 }}
+                          formatter={(value) => <span style={{ color: '#cac8c4' }}>{value}</span>}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="maxWeight"
+                          name="Max Gewicht"
+                          stroke={MAX_COLOR}
                           strokeWidth={2}
                           fill={`url(#gradient-${exercise.id})`}
+                          activeDot={{ r: 4, stroke: '#33322f', strokeWidth: 2 }}
                         />
-                      </AreaChart>
+                        <Line
+                          type="monotone"
+                          dataKey="e1rm"
+                          name="e1RM (geschätzt)"
+                          stroke={E1RM_COLOR}
+                          strokeWidth={2}
+                          dot={false}
+                          activeDot={{ r: 4, stroke: '#33322f', strokeWidth: 2 }}
+                        />
+                      </ComposedChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
@@ -195,6 +228,13 @@ export default function Progress() {
         </h1>
         <p className="text-iron-500 mt-1">Verfolge deine Entwicklung bei jeder Übung</p>
       </header>
+
+      <div className="grid gap-6 mb-8">
+        <TrainingCalendar />
+        <WeeklyVolumeChart />
+      </div>
+
+      <h2 className="section-title text-iron-400 text-sm mb-3">Übungen</h2>
 
       {/* Filter */}
       <div className="mb-6 flex flex-wrap gap-2">

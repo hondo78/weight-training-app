@@ -359,9 +359,9 @@ app.get('/api/exercises/:id/history', async (req, res) => {
       SELECT el.*, ws.session_date
       FROM exercise_logs el
       JOIN workout_sessions ws ON el.session_id = ws.id
-      WHERE el.exercise_id = $1
-      ORDER BY ws.session_date DESC, el.set_number
-      LIMIT 100
+      WHERE el.exercise_id = $1 AND el.reps > 0
+      ORDER BY ws.session_date DESC, ws.started_at DESC, el.set_number
+      LIMIT 300
     `, [req.params.id]);
     res.json(result.rows);
   } catch (error) {
@@ -373,12 +373,13 @@ app.get('/api/exercises/:id/history', async (req, res) => {
 app.get('/api/exercises/:id/records', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         MAX(weight_kg) as max_weight,
-        MAX(reps) FILTER (WHERE weight_kg = (SELECT MAX(weight_kg) FROM exercise_logs WHERE exercise_id = $1)) as reps_at_max,
-        MAX(weight_kg * reps) as max_volume_set
+        MAX(reps) FILTER (WHERE weight_kg = (SELECT MAX(weight_kg) FROM exercise_logs WHERE exercise_id = $1 AND reps > 0)) as reps_at_max,
+        MAX(weight_kg * reps) as max_volume_set,
+        ROUND(MAX(CASE WHEN reps = 1 THEN weight_kg ELSE weight_kg * (1 + reps / 30.0) END), 1) as best_e1rm
       FROM exercise_logs
-      WHERE exercise_id = $1
+      WHERE exercise_id = $1 AND reps > 0
     `, [req.params.id]);
     res.json(result.rows[0]);
   } catch (error) {
@@ -449,7 +450,7 @@ app.get('/api/stats/dashboard', async (req, res) => {
         FROM exercise_logs el
         JOIN exercises e ON el.exercise_id = e.id
         JOIN workout_sessions ws ON el.session_id = ws.id
-        WHERE ws.session_date >= CURRENT_DATE - INTERVAL '7 days'
+        WHERE ws.session_date >= CURRENT_DATE - INTERVAL '7 days' AND el.reps > 0
         ORDER BY el.weight_kg DESC
         LIMIT 5
       `)
@@ -474,11 +475,103 @@ app.get('/api/stats/muscle-distribution', async (req, res) => {
       FROM exercise_logs el
       JOIN exercises e ON el.exercise_id = e.id
       JOIN workout_sessions ws ON el.session_id = ws.id
-      WHERE ws.session_date >= CURRENT_DATE - INTERVAL '30 days'
+      WHERE ws.session_date >= CURRENT_DATE - INTERVAL '30 days' AND el.reps > 0
       GROUP BY e.muscle_group
       ORDER BY volume DESC
     `);
     res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Weekly sets/volume per muscle group (only real sets, no placeholders)
+app.get('/api/stats/weekly-volume', async (req, res) => {
+  const weeks = Math.min(Math.max(parseInt(req.query.weeks) || 12, 1), 104);
+  try {
+    const result = await pool.query(`
+      SELECT to_char(date_trunc('week', ws.session_date), 'YYYY-MM-DD') as week_start,
+             e.muscle_group,
+             COUNT(el.id)::int as sets,
+             COALESCE(SUM(el.weight_kg * el.reps), 0)::float as volume
+      FROM exercise_logs el
+      JOIN exercises e ON el.exercise_id = e.id
+      JOIN workout_sessions ws ON el.session_id = ws.id
+      WHERE el.reps > 0
+        AND ws.session_date >= date_trunc('week', CURRENT_DATE) - make_interval(weeks => $1 - 1)
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+    `, [weeks]);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Training days for the calendar heatmap
+app.get('/api/stats/calendar', async (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days) || 182, 1), 730);
+  try {
+    const result = await pool.query(`
+      SELECT to_char(ws.session_date, 'YYYY-MM-DD') as date,
+             COUNT(DISTINCT ws.id)::int as sessions,
+             COUNT(el.id) FILTER (WHERE el.reps > 0)::int as sets,
+             COALESCE(SUM(el.weight_kg * el.reps) FILTER (WHERE el.reps > 0), 0)::float as volume
+      FROM workout_sessions ws
+      LEFT JOIN exercise_logs el ON el.session_id = ws.id
+      WHERE ws.session_date > CURRENT_DATE - $1::int
+      GROUP BY ws.session_date
+      ORDER BY ws.session_date
+    `, [days]);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============ EXPORT ============
+
+const csvCell = (value) => {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  return /[";\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+};
+
+// Decimal comma so German Excel reads numbers correctly
+const csvNumber = (value) => (value === null || value === undefined ? '' : String(value).replace('.', ','));
+
+app.get('/api/export', async (req, res) => {
+  const format = req.query.format === 'csv' ? 'csv' : 'json';
+  const stamp = new Date().toISOString().slice(0, 10);
+  try {
+    if (format === 'csv') {
+      const result = await pool.query(`
+        SELECT to_char(ws.session_date, 'YYYY-MM-DD') as date, ws.id as session_id, wp.name as plan,
+               e.name as exercise, e.muscle_group, el.set_number, el.weight_kg, el.reps, el.rpe, el.notes
+        FROM exercise_logs el
+        JOIN workout_sessions ws ON el.session_id = ws.id
+        JOIN exercises e ON el.exercise_id = e.id
+        LEFT JOIN workout_plans wp ON ws.plan_id = wp.id
+        WHERE el.reps > 0
+        ORDER BY ws.session_date, ws.id, el.logged_at, el.set_number
+      `);
+      const header = ['Datum', 'Session', 'Plan', 'Übung', 'Muskelgruppe', 'Satz', 'Gewicht (kg)', 'Wdh', 'RPE', 'Notiz'];
+      const lines = result.rows.map(r => [
+        r.date, r.session_id, csvCell(r.plan), csvCell(r.exercise), csvCell(r.muscle_group),
+        r.set_number, csvNumber(r.weight_kg), r.reps, r.rpe ?? '', csvCell(r.notes)
+      ].join(';'));
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="ironlog-saetze-${stamp}.csv"`);
+      return res.send('\uFEFF' + [header.join(';'), ...lines].join('\r\n') + '\r\n');
+    }
+
+    const tables = ['exercises', 'workout_plans', 'plan_exercises', 'workout_sessions', 'exercise_logs', 'body_measurements'];
+    const data = {};
+    for (const table of tables) {
+      data[table] = (await pool.query(`SELECT * FROM ${table} ORDER BY id`)).rows;
+    }
+    res.setHeader('Content-Disposition', `attachment; filename="ironlog-export-${stamp}.json"`);
+    res.json({ exported_at: new Date().toISOString(), ...data });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

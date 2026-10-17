@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Dumbbell, Flame, Trophy, TrendingUp, ChevronRight, Calendar } from 'lucide-react';
+import { Dumbbell, Flame, Trophy, TrendingUp, ChevronRight, Calendar, Download } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 const API_BASE = '/api';
@@ -90,11 +90,34 @@ export default function Dashboard() {
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto">
       {/* Header */}
-      <header className="mb-8 opacity-0 animate-fade-in">
-        <p className="text-iron-500 text-sm mb-1">Willkommen zurück</p>
-        <h1 className="font-display text-3xl md:text-4xl font-bold text-iron-100 tracking-wide">
-          Dashboard
-        </h1>
+      <header className="mb-8 opacity-0 animate-fade-in flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-iron-500 text-sm mb-1">Willkommen zurück</p>
+          <h1 className="font-display text-3xl md:text-4xl font-bold text-iron-100 tracking-wide">
+            Dashboard
+          </h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-iron-500 text-xs mr-1">Export</span>
+          <a
+            href={`${API_BASE}/export?format=csv`}
+            download
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-iron-800 hover:bg-iron-700 text-iron-200 text-sm transition-colors"
+            title="Alle Sätze als CSV (für Excel)"
+          >
+            <Download className="w-4 h-4" />
+            CSV
+          </a>
+          <a
+            href={`${API_BASE}/export?format=json`}
+            download
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-iron-800 hover:bg-iron-700 text-iron-200 text-sm transition-colors"
+            title="Alle Daten als JSON"
+          >
+            <Download className="w-4 h-4" />
+            JSON
+          </a>
+        </div>
       </header>
 
       {/* Stats Grid */}
