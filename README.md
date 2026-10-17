@@ -29,8 +29,9 @@ cd weight-training-app
 docker compose up -d
 
 # App ist nun erreichbar unter:
-# Frontend: http://localhost:3000
-# API:      http://localhost:3001
+# Frontend: http://<host>:3002
+# API:      http://localhost:3011   (nur vom Host aus)
+# pgAdmin:  http://localhost:5052   (nur vom Host aus, ohne Login)
 ```
 
 ### Stoppen
@@ -48,7 +49,7 @@ docker compose down -v
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │     Nginx       │     │   Express.js    │     │   PostgreSQL    │
 │   (Frontend)    │────▶│    (Backend)    │────▶│   (Database)    │
-│   Port: 3000    │     │   Port: 3001    │     │   Port: 5432    │
+│ Host-Port: 3002 │     │ Host-Port: 3011 │     │ kein Host-Port  │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
@@ -135,18 +136,25 @@ Die Datenbank enthält folgende Tabellen:
 
 ## Entwicklung
 
-### Lokale Entwicklung ohne Docker
+### Lokale Entwicklung
+
+Die Datenbank hat absichtlich keinen Host-Port. Am einfachsten läuft das
+Frontend lokal gegen das Docker-Backend:
 
 ```bash
-# Backend
-cd backend
-npm install
-DATABASE_URL=postgresql://trainer:strongpassword123@localhost:5432/weight_training npm start
-
-# Frontend (neues Terminal)
+docker compose up -d db backend
 cd frontend
 npm install
-npm run dev
+npm run dev          # Vite leitet /api an http://localhost:3011 weiter
+```
+
+Ein lokal gestartetes Backend braucht eine erreichbare Datenbank
+(`DATABASE_URL`) und einen freien Port (`PORT`, Standard 3001). Das Frontend
+zeigt dann per `API_TARGET` darauf:
+
+```bash
+cd backend && PORT=3012 DATABASE_URL=postgresql://... npm run dev
+cd frontend && API_TARGET=http://localhost:3012 npm run dev
 ```
 
 ### Datenbank-Zugang
@@ -164,7 +172,8 @@ In `docker-compose.yml` und `backend/server.js` das Passwort `strongpassword123`
 
 ### Port ändern
 
-In `docker-compose.yml` die Ports unter `ports:` anpassen.
+In `docker-compose.yml` die Ports unter `ports:` anpassen. Der Vite-Dev-Proxy
+nutzt `API_TARGET` (Standard `http://localhost:3011`), das Backend `PORT`.
 
 ## Lizenz
 
