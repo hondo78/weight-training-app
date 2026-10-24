@@ -73,7 +73,7 @@ export default function TrainingCalendar() {
   };
 
   return (
-    <div className="bg-iron-900 rounded-xl p-5">
+    <div className="card p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
         <h2 className="section-title text-iron-400 text-sm">Trainingskalender (26 Wochen)</h2>
         <p className="text-iron-400 text-sm">

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, Scale, Ruler, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { Plus, Trash2, Scale, Ruler, TrendingUp, TrendingDown, Minus, Percent } from 'lucide-react';
+import { Modal, PageHeader, Spinner, EmptyState, useFeedback } from '../components/ui';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 const API_BASE = '/api';
@@ -10,10 +11,10 @@ function MeasurementInput({ label, value, onChange, unit, placeholder }) {
       <label className="block text-iron-400 text-sm mb-1">{label}</label>
       <div className="relative">
         <input
-          type="number"
-          step="0.1"
+          type="text"
+          inputMode="decimal"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(e.target.value.replace(/[^\d.,]/g, ''))}
           placeholder={placeholder}
           className="input-field w-full pr-10"
         />
@@ -25,30 +26,16 @@ function MeasurementInput({ label, value, onChange, unit, placeholder }) {
   );
 }
 
-function TrendIndicator({ current, previous }) {
+// Neutral dargestellt: ob mehr oder weniger "gut" ist, hängt vom Ziel ab
+function TrendIndicator({ current, previous, unit }) {
   if (!current || !previous) return null;
-  
-  const diff = current - previous;
-  const percentage = ((diff / previous) * 100).toFixed(1);
-  
-  if (Math.abs(diff) < 0.1) {
-    return (
-      <span className="flex items-center gap-1 text-iron-500 text-sm">
-        <Minus className="w-3 h-3" />
-        0%
-      </span>
-    );
-  }
-  
-  return diff > 0 ? (
-    <span className="flex items-center gap-1 text-emerald-400 text-sm">
-      <TrendingUp className="w-3 h-3" />
-      +{percentage}%
-    </span>
-  ) : (
-    <span className="flex items-center gap-1 text-red-400 text-sm">
-      <TrendingDown className="w-3 h-3" />
-      {percentage}%
+  const diff = Math.round((current - previous) * 10) / 10;
+  const Icon = diff > 0 ? TrendingUp : diff < 0 ? TrendingDown : Minus;
+  const text = diff === 0 ? '±0' : `${diff > 0 ? '+' : ''}${diff.toLocaleString('de-DE')}`;
+  return (
+    <span className="flex items-center gap-1 text-iron-400 text-xs mt-1">
+      <Icon className="w-3 h-3" />
+      {text} {unit} seit letzter Messung
     </span>
   );
 }
@@ -75,13 +62,13 @@ function AddMeasurementModal({ onClose, onAdd }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           measurement_date: date,
-          weight_kg: weight ? parseFloat(weight) : null,
-          body_fat_percent: bodyFat ? parseFloat(bodyFat) : null,
-          chest_cm: chest ? parseFloat(chest) : null,
-          waist_cm: waist ? parseFloat(waist) : null,
-          hips_cm: hips ? parseFloat(hips) : null,
-          biceps_cm: biceps ? parseFloat(biceps) : null,
-          thighs_cm: thighs ? parseFloat(thighs) : null,
+          weight_kg: weight ? parseFloat(weight.replace(',', '.')) : null,
+          body_fat_percent: bodyFat ? parseFloat(bodyFat.replace(',', '.')) : null,
+          chest_cm: chest ? parseFloat(chest.replace(',', '.')) : null,
+          waist_cm: waist ? parseFloat(waist.replace(',', '.')) : null,
+          hips_cm: hips ? parseFloat(hips.replace(',', '.')) : null,
+          biceps_cm: biceps ? parseFloat(biceps.replace(',', '.')) : null,
+          thighs_cm: thighs ? parseFloat(thighs.replace(',', '.')) : null,
           notes: notes || null
         })
       });
@@ -98,16 +85,19 @@ function AddMeasurementModal({ onClose, onAdd }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-iron-900 rounded-xl w-full max-w-lg my-8">
-        <div className="p-4 border-b border-iron-700 flex items-center justify-between">
-          <h3 className="font-display text-lg text-iron-100">Neue Messung</h3>
-          <button onClick={onClose} className="text-iron-400 hover:text-iron-200">
-            ✕
+    <Modal
+      title="Neue Messung"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">Abbrechen</button>
+          <button type="submit" form="add-measurement" disabled={loading} className="btn-primary flex-1">
+            {loading ? 'Speichern…' : 'Speichern'}
           </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-4 space-y-4">
+        </>
+      }
+    >
+        <form id="add-measurement" onSubmit={handleSubmit} className="p-5 space-y-4">
           <div>
             <label className="block text-iron-400 text-sm mb-1">Datum</label>
             <input
@@ -187,21 +177,13 @@ function AddMeasurementModal({ onClose, onAdd }) {
             />
           </div>
 
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="btn-secondary flex-1">
-              Abbrechen
-            </button>
-            <button type="submit" disabled={loading} className="btn-primary flex-1">
-              {loading ? 'Speichern...' : 'Speichern'}
-            </button>
-          </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
 export default function Measurements() {
+  const { confirm, toast } = useFeedback();
   const [measurements, setMeasurements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -223,10 +205,11 @@ export default function Measurements() {
   }, []);
 
   const handleDelete = async (id) => {
-    if (!confirm('Messung wirklich löschen?')) return;
+    if (!(await confirm({ title: 'Messung löschen?', confirmLabel: 'Löschen', danger: true }))) return;
     try {
       await fetch(`${API_BASE}/measurements/${id}`, { method: 'DELETE' });
       await loadMeasurements();
+      toast('Messung gelöscht');
     } catch (error) {
       console.error('Error deleting measurement:', error);
     }
@@ -253,36 +236,20 @@ export default function Measurements() {
     { key: 'chest', label: 'Brust', color: '#f59e0b' }
   ];
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="w-8 h-8 border-2 border-rust-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
+  if (loading) return <Spinner fullPage />;
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-4xl mx-auto">
-      <header className="mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="font-display text-3xl md:text-4xl font-bold text-iron-100 tracking-wide">
-            Körperdaten
-          </h1>
-          <p className="text-iron-500 mt-1">Verfolge deine körperliche Entwicklung</p>
-        </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          Messen
-        </button>
-      </header>
+      <PageHeader
+        title="Körper"
+        subtitle="Gewicht, Körperfett und Umfänge"
+        actions={<button onClick={() => setShowAddModal(true)} className="btn-primary"><Plus className="w-4 h-4" /> Messen</button>}
+      />
 
       {/* Current Stats */}
       {latest && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-iron-900 rounded-xl p-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
+          <div className="card p-4">
             <div className="flex items-center gap-2 mb-2">
               <Scale className="w-4 h-4 text-rust-400" />
               <span className="text-iron-400 text-sm">Gewicht</span>
@@ -293,14 +260,15 @@ export default function Measurements() {
               </span>
               <span className="text-iron-500 text-sm">kg</span>
             </div>
-            <TrendIndicator 
+            <TrendIndicator unit="kg"
               current={parseFloat(latest.weight_kg)} 
               previous={parseFloat(previous?.weight_kg)} 
             />
           </div>
 
-          <div className="bg-iron-900 rounded-xl p-4">
+          <div className="card p-4">
             <div className="flex items-center gap-2 mb-2">
+              <Percent className="w-4 h-4 text-steel-400" />
               <span className="text-iron-400 text-sm">Körperfett</span>
             </div>
             <div className="flex items-baseline gap-2">
@@ -309,13 +277,13 @@ export default function Measurements() {
               </span>
               <span className="text-iron-500 text-sm">%</span>
             </div>
-            <TrendIndicator 
+            <TrendIndicator unit="%"
               current={parseFloat(latest.body_fat_percent)} 
               previous={parseFloat(previous?.body_fat_percent)} 
             />
           </div>
 
-          <div className="bg-iron-900 rounded-xl p-4">
+          <div className="card p-4">
             <div className="flex items-center gap-2 mb-2">
               <Ruler className="w-4 h-4 text-emerald-400" />
               <span className="text-iron-400 text-sm">Taille</span>
@@ -326,13 +294,13 @@ export default function Measurements() {
               </span>
               <span className="text-iron-500 text-sm">cm</span>
             </div>
-            <TrendIndicator 
+            <TrendIndicator unit="cm"
               current={parseFloat(latest.waist_cm)} 
               previous={parseFloat(previous?.waist_cm)} 
             />
           </div>
 
-          <div className="bg-iron-900 rounded-xl p-4">
+          <div className="card p-4">
             <div className="flex items-center gap-2 mb-2">
               <Ruler className="w-4 h-4 text-amber-400" />
               <span className="text-iron-400 text-sm">Brust</span>
@@ -343,7 +311,7 @@ export default function Measurements() {
               </span>
               <span className="text-iron-500 text-sm">cm</span>
             </div>
-            <TrendIndicator 
+            <TrendIndicator unit="cm"
               current={parseFloat(latest.chest_cm)} 
               previous={parseFloat(previous?.chest_cm)} 
             />
@@ -353,7 +321,7 @@ export default function Measurements() {
 
       {/* Chart */}
       {chartData.length > 0 && (
-        <div className="bg-iron-900 rounded-xl p-5 mb-6">
+        <div className="card p-5 mb-6">
           <div className="flex flex-wrap items-center gap-2 mb-4">
             {chartOptions.map(opt => (
               <button
@@ -408,7 +376,7 @@ export default function Measurements() {
       )}
 
       {/* Measurement History */}
-      <div className="bg-iron-900 rounded-xl overflow-hidden">
+      <div className="card overflow-hidden">
         <div className="p-4 border-b border-iron-800">
           <h2 className="section-title text-iron-400 text-sm">Verlauf</h2>
         </div>
@@ -459,16 +427,12 @@ export default function Measurements() {
             ))}
           </div>
         ) : (
-          <div className="p-8 text-center text-iron-500">
-            <p>Noch keine Messungen erfasst</p>
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="btn-primary mt-4 inline-flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Erste Messung
-            </button>
-          </div>
+          <EmptyState
+            icon={Scale}
+            title="Noch keine Messungen"
+            text="Trage regelmäßig dein Gewicht ein – am besten morgens, immer zur gleichen Zeit."
+            action={<button onClick={() => setShowAddModal(true)} className="btn-primary"><Plus className="w-4 h-4" /> Erste Messung</button>}
+          />
         )}
       </div>
 

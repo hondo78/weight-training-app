@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Plus, Search, X, Dumbbell } from 'lucide-react';
+import { Plus, Search, Dumbbell } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Modal, PageHeader, Spinner, EmptyState, useFeedback } from '../components/ui';
 
 const API_BASE = '/api';
 
@@ -14,14 +16,18 @@ const MUSCLE_GROUPS = [
 
 function ExerciseCard({ exercise }) {
   return (
-    <div className="bg-iron-900 rounded-xl p-4 card-hover">
+    <div className="card p-4">
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 bg-iron-800 rounded-lg flex items-center justify-center flex-shrink-0">
+        <div className="w-10 h-10 bg-iron-800 rounded-xl flex items-center justify-center flex-shrink-0">
           <Dumbbell className="w-5 h-5 text-rust-400" />
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="text-iron-100 font-medium">{exercise.name}</h3>
-          <p className="text-iron-500 text-sm">{exercise.muscle_group}</p>
+          <h3 className="text-iron-50 font-medium">{exercise.name}</h3>
+          <p className="text-iron-500 text-sm">
+            {exercise.set_count > 0
+              ? <Link to="/progress" className="hover:text-rust-400">{exercise.set_count} Sätze trainiert</Link>
+              : 'Noch nicht trainiert'}
+          </p>
           {exercise.description && (
             <p className="text-iron-400 text-sm mt-2">{exercise.description}</p>
           )}
@@ -31,8 +37,9 @@ function ExerciseCard({ exercise }) {
   );
 }
 
-function AddExerciseModal({ onClose, onAdd }) {
-  const [name, setName] = useState('');
+function AddExerciseModal({ initialName = '', onClose, onAdd }) {
+  const { toast } = useFeedback();
+  const [name, setName] = useState(initialName);
   const [muscleGroup, setMuscleGroup] = useState('Brust');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
@@ -53,80 +60,52 @@ function AddExerciseModal({ onClose, onAdd }) {
         })
       });
 
-      if (res.ok) {
-        const newExercise = await res.json();
-        onAdd(newExercise);
-        onClose();
-      }
-    } catch (error) {
-      console.error('Error adding exercise:', error);
+      if (!res.ok) throw new Error();
+      const newExercise = await res.json();
+      onAdd({ ...newExercise, set_count: 0 });
+      toast(`${newExercise.name} angelegt`);
+      onClose();
+    } catch {
+      toast('Übung konnte nicht angelegt werden', 'error');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-iron-900 rounded-xl w-full max-w-md">
-        <div className="p-4 border-b border-iron-700 flex items-center justify-between">
-          <h3 className="font-display text-lg text-iron-100">Neue Übung</h3>
-          <button onClick={onClose} className="text-iron-400 hover:text-iron-200">
-            <X className="w-5 h-5" />
+    <Modal
+      title="Neue Übung"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">Abbrechen</button>
+          <button type="submit" form="add-exercise" disabled={loading || !name.trim()} className="btn-primary flex-1">
+            {loading ? 'Speichern…' : 'Hinzufügen'}
           </button>
+        </>
+      }
+    >
+      <form id="add-exercise" onSubmit={handleSubmit} className="p-5 space-y-4">
+        <label className="block">
+          <span className="block text-iron-400 text-sm mb-1.5">Name</span>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="z. B. Bulgarian Split Squats" className="input-field w-full" autoFocus />
+        </label>
+        <div>
+          <span className="block text-iron-400 text-sm mb-1.5">Muskelgruppe</span>
+          <div className="flex flex-wrap gap-2">
+            {MUSCLE_GROUPS.map(group => (
+              <button key={group} type="button" onClick={() => setMuscleGroup(group)} className={`chip ${muscleGroup === group ? 'chip-active' : 'chip-idle'}`}>
+                {group}
+              </button>
+            ))}
+          </div>
         </div>
-
-        <form onSubmit={handleSubmit} className="p-4 space-y-4">
-          <div>
-            <label className="block text-iron-400 text-sm mb-2">Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="z.B. Bulgarian Split Squats"
-              className="input-field w-full"
-              autoFocus
-            />
-          </div>
-
-          <div>
-            <label className="block text-iron-400 text-sm mb-2">Muskelgruppe</label>
-            <select
-              value={muscleGroup}
-              onChange={(e) => setMuscleGroup(e.target.value)}
-              className="input-field w-full"
-            >
-              {MUSCLE_GROUPS.map(group => (
-                <option key={group} value={group}>{group}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-iron-400 text-sm mb-2">Beschreibung (optional)</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Kurze Beschreibung der Übung"
-              rows={3}
-              className="input-field w-full resize-none"
-            />
-          </div>
-
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="btn-secondary flex-1">
-              Abbrechen
-            </button>
-            <button 
-              type="submit" 
-              disabled={loading || !name.trim()}
-              className="btn-primary flex-1"
-            >
-              {loading ? 'Speichern...' : 'Hinzufügen'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <label className="block">
+          <span className="block text-iron-400 text-sm mb-1.5">Beschreibung (optional)</span>
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Kurze Beschreibung der Übung" rows={3} className="input-field w-full resize-none" />
+        </label>
+      </form>
+    </Modal>
   );
 }
 
@@ -168,87 +147,50 @@ export default function Exercises() {
     setExercises([...exercises, newExercise]);
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="w-8 h-8 border-2 border-rust-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
+  if (loading) return <Spinner fullPage />;
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-4xl mx-auto">
-      <header className="mb-6">
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h1 className="font-display text-3xl md:text-4xl font-bold text-iron-100 tracking-wide">
-              Übungen
-            </h1>
-            <p className="text-iron-500 mt-1">{exercises.length} Übungen verfügbar</p>
-          </div>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="btn-primary flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Neu
+      <PageHeader
+        title="Übungen"
+        subtitle={`${exercises.length} Übungen im Katalog`}
+        actions={<button onClick={() => setShowAddModal(true)} className="btn-primary"><Plus className="w-4 h-4" /> Neu</button>}
+      />
+
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-iron-500" />
+        <input type="search" placeholder="Übung suchen…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="input-field w-full pl-10" />
+      </div>
+      <div className="mb-6 -mx-4 px-4 flex gap-2 overflow-x-auto no-scrollbar">
+        {['Alle', ...MUSCLE_GROUPS].map(group => (
+          <button key={group} onClick={() => setSelectedGroup(group)} className={`chip ${selectedGroup === group ? 'chip-active' : 'chip-idle'}`}>
+            {group}
           </button>
-        </div>
+        ))}
+      </div>
 
-        {/* Search & Filter */}
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-iron-500" />
-            <input
-              type="text"
-              placeholder="Übung suchen..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="input-field w-full pl-10"
-            />
+      {Object.entries(groupedExercises).map(([group, exs]) => (
+        <section key={group} className="mb-6">
+          <h2 className="section-title text-iron-400 text-sm mb-3">{group} <span className="text-iron-600">· {exs.length}</span></h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {exs.map(ex => <ExerciseCard key={ex.id} exercise={ex} />)}
           </div>
-          <select
-            value={selectedGroup}
-            onChange={(e) => setSelectedGroup(e.target.value)}
-            className="input-field"
-          >
-            <option value="Alle">Alle Muskelgruppen</option>
-            {MUSCLE_GROUPS.map(group => (
-              <option key={group} value={group}>{group}</option>
-            ))}
-          </select>
-        </div>
-      </header>
-
-      {/* Exercise List */}
-      {selectedGroup === 'Alle' ? (
-        Object.entries(groupedExercises).map(([group, exs]) => (
-          <div key={group} className="mb-6">
-            <h2 className="section-title text-iron-400 text-sm mb-3">{group}</h2>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {exs.map(ex => (
-                <ExerciseCard key={ex.id} exercise={ex} />
-              ))}
-            </div>
-          </div>
-        ))
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {filteredExercises.map(ex => (
-            <ExerciseCard key={ex.id} exercise={ex} />
-          ))}
-        </div>
-      )}
+        </section>
+      ))}
 
       {filteredExercises.length === 0 && (
-        <div className="text-center py-12 bg-iron-900 rounded-xl">
-          <p className="text-iron-500">Keine Übungen gefunden</p>
+        <div className="card">
+          <EmptyState
+            icon={Search}
+            title="Keine Übung gefunden"
+            action={searchQuery && <button onClick={() => setShowAddModal(true)} className="btn-secondary"><Plus className="w-4 h-4" /> „{searchQuery}“ anlegen</button>}
+          />
         </div>
       )}
 
-      {/* Add Exercise Modal */}
       {showAddModal && (
         <AddExerciseModal
+          initialName={filteredExercises.length === 0 ? searchQuery : ''}
           onClose={() => setShowAddModal(false)}
           onAdd={handleAddExercise}
         />

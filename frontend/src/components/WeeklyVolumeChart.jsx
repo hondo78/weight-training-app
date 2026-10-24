@@ -91,7 +91,7 @@ export default function WeeklyVolumeChart() {
   }, [rows]);
 
   return (
-    <div className="bg-iron-900 rounded-xl p-5">
+    <div className="card p-5">
       <h2 className="section-title text-iron-400 text-sm mb-1">Sätze pro Woche & Muskelgruppe</h2>
       <p className="text-iron-500 text-xs mb-4">Letzte {WEEKS} Wochen, nur ausgefüllte Sätze</p>
 

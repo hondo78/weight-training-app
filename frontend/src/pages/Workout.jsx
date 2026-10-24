@@ -1,332 +1,316 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Play, Square, Plus, Check, Trash2, Timer, ChevronDown, X, Sparkles, WifiOff, RotateCcw } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import {
+  Play, Plus, Check, Trash2, Timer, ChevronDown, X, Sparkles, WifiOff, RotateCcw,
+  Info, Minus, Flag, Dumbbell, CalendarDays, Trophy
+} from 'lucide-react';
 import RestTimer, { unlockAudio } from '../components/RestTimer';
+import ExercisePicker from '../components/ExercisePicker';
+import { PageHeader, Spinner, EmptyState, useFeedback } from '../components/ui';
 import useWakeLock from '../hooks/useWakeLock';
 import { putWithRetry, subscribe, pendingCount } from '../lib/syncQueue';
-import { suggestNextWeight, formatKg } from '../lib/training';
+import { suggestNextWeight, formatKg, parseTargetReps } from '../lib/training';
+import { getActiveSession, setActiveSession as storeActiveSession, formatDuration } from '../lib/activeSession';
 
 const API_BASE = '/api';
+const DEFAULT_SETS = 3;
 
-function SetRow({ set, onUpdate, onDelete }) {
-  const [weight, setWeight] = useState(parseFloat(set.weight_kg) || '');
-  const [reps, setReps] = useState(set.reps || '');
-  const [rpe, setRpe] = useState(set.rpe || '');
+// Komma oder Punkt als Dezimaltrenner zulassen
+const toNumber = (value) => parseFloat(String(value ?? '').replace(',', '.')) || 0;
+const isDone = (log) => (parseInt(log.reps) || 0) > 0;
+
+const formatDate = (date, options = { day: '2-digit', month: '2-digit', year: 'numeric' }) =>
+  new Date(date).toLocaleDateString('de-DE', options);
+
+function relativeDay(date) {
+  if (!date) return null;
+  const start = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((start(new Date()) - start(new Date(date))) / 86400000);
+  if (days <= 0) return 'heute';
+  if (days === 1) return 'gestern';
+  if (days < 7) return `vor ${days} Tagen`;
+  if (days < 14) return 'vor 1 Woche';
+  return `vor ${Math.floor(days / 7)} Wochen`;
+}
+
+// Übungsliste einer Session: Planübungen in Planreihenfolge, danach frei hinzugefügte
+function buildExerciseList(planExercises, logs) {
+  const list = planExercises.map(pe => ({
+    id: pe.exercise_id,
+    name: pe.name,
+    muscle_group: pe.muscle_group,
+    rest_seconds: pe.rest_seconds,
+    target_reps: pe.target_reps
+  }));
+  const known = new Set(list.map(e => e.id));
+  logs.forEach(log => {
+    if (!known.has(log.exercise_id)) {
+      known.add(log.exercise_id);
+      list.push({ id: log.exercise_id, name: log.exercise_name, muscle_group: log.muscle_group });
+    }
+  });
+  return list;
+}
+
+// ============ Satzzeile ============
+
+function SetRow({ set, index, previous, placeholder, onSave }) {
+  const [weight, setWeight] = useState('');
+  const [reps, setReps] = useState('');
+  const [rpe, setRpe] = useState('');
+  const repsRef = useRef(null);
+  // Zustand beim Antippen merken: das Blur des Eingabefelds speichert evtl. schon vor dem Klick
+  const doneAtPress = useRef(null);
+  const done = isDone(set);
 
   useEffect(() => {
-    setWeight(parseFloat(set.weight_kg) || '');
-    setReps(set.reps || '');
-    setRpe(set.rpe || '');
+    setWeight(toNumber(set.weight_kg) ? String(toNumber(set.weight_kg)).replace('.', ',') : '');
+    setReps(parseInt(set.reps) > 0 ? String(set.reps) : '');
+    setRpe(set.rpe ? String(set.rpe) : '');
   }, [set.weight_kg, set.reps, set.rpe]);
 
-  const handleSave = () => {
-    onUpdate({
-      ...set,
-      weight_kg: parseFloat(weight) || 0,
-      reps: parseInt(reps) || 0,
-      rpe: parseInt(rpe) || null
-    });
+  const values = () => ({
+    weight_kg: toNumber(weight),
+    reps: parseInt(reps) || 0,
+    rpe: Math.min(10, Math.max(0, parseInt(rpe) || 0)) || null
+  });
+
+  const handleBlur = () => onSave(set, values());
+
+  // Abhaken übernimmt leere Felder aus dem Vorschlag (letzte Session / vorheriger Satz)
+  const toggleDone = () => {
+    const wasDone = doneAtPress.current ?? done;
+    doneAtPress.current = null;
+    if (wasDone) {
+      onSave(set, { ...values(), reps: 0 });
+      return;
+    }
+    const next = values();
+    if (!weight && placeholder.weight) next.weight_kg = placeholder.weight;
+    if (!reps && placeholder.reps) next.reps = placeholder.reps;
+    if (!next.reps) {
+      repsRef.current?.focus();
+      return;
+    }
+    onSave(set, next);
   };
 
   return (
-    <div className="flex items-center gap-2 py-2">
-      <span className="w-8 text-center text-iron-500 text-sm font-mono">{set.set_number}</span>
+    <div className={`grid grid-cols-[1.75rem_3.5rem_1fr_1fr_2.75rem_2.75rem] gap-1.5 items-center px-2 py-1.5 rounded-xl transition-colors ${
+      done ? 'bg-emerald-500/10' : ''
+    }`}>
+      <span className={`text-center text-sm font-mono font-semibold ${done ? 'text-emerald-400' : 'text-iron-500'}`}>
+        {index + 1}
+      </span>
+      <span className="text-center text-xs text-iron-500 font-mono truncate" title="Letztes Training">
+        {previous ? `${formatKg(previous.weight_kg)}×${previous.reps}` : '–'}
+      </span>
       <input
-        type="number"
-        placeholder="kg"
+        type="text"
+        inputMode="decimal"
+        aria-label={`Satz ${index + 1} Gewicht in kg`}
+        placeholder={placeholder.weight ? formatKg(placeholder.weight) : 'kg'}
         value={weight}
-        onChange={(e) => setWeight(e.target.value)}
-        onBlur={handleSave}
-        className="input-field w-20 text-center"
+        onChange={(e) => setWeight(e.target.value.replace(/[^\d.,]/g, ''))}
+        onBlur={handleBlur}
+        onFocus={(e) => e.target.select()}
+        className={`set-input ${done ? 'bg-transparent' : ''}`}
       />
-      <span className="text-iron-600">×</span>
       <input
-        type="number"
-        placeholder="Wdh"
+        ref={repsRef}
+        type="text"
+        inputMode="numeric"
+        aria-label={`Satz ${index + 1} Wiederholungen`}
+        placeholder={placeholder.reps ? String(placeholder.reps) : 'Wdh'}
         value={reps}
-        onChange={(e) => setReps(e.target.value)}
-        onBlur={handleSave}
-        className="input-field w-16 text-center"
+        onChange={(e) => setReps(e.target.value.replace(/\D/g, ''))}
+        onBlur={handleBlur}
+        onFocus={(e) => e.target.select()}
+        className={`set-input ${done ? 'bg-transparent' : ''}`}
       />
       <input
-        type="number"
-        placeholder="RPE"
-        min="1"
-        max="10"
+        type="text"
+        inputMode="numeric"
+        aria-label={`Satz ${index + 1} RPE`}
+        placeholder="–"
         value={rpe}
-        onChange={(e) => setRpe(e.target.value)}
-        onBlur={handleSave}
-        className="input-field w-16 text-center text-sm"
+        onChange={(e) => setRpe(e.target.value.replace(/\D/g, '').slice(0, 2))}
+        onBlur={handleBlur}
+        onFocus={(e) => e.target.select()}
+        className={`set-input !text-sm ${done ? 'bg-transparent' : ''}`}
       />
-      <button 
-        onClick={onDelete}
-        className="p-2 text-iron-500 hover:text-red-400 transition-colors"
+      <button
+        onPointerDown={() => { doneAtPress.current = done; }}
+        onClick={toggleDone}
+        aria-label={done ? 'Satz wieder öffnen' : 'Satz erledigt'}
+        className={`h-11 rounded-lg flex items-center justify-center transition-all active:scale-95 ${
+          done
+            ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-900/40'
+            : 'bg-iron-800 text-iron-500 hover:text-iron-200 hover:bg-iron-700'
+        }`}
       >
-        <Trash2 className="w-4 h-4" />
+        <Check className="w-5 h-5" strokeWidth={3} />
       </button>
     </div>
   );
 }
 
-function ExerciseCard({ exercise, sessionId, onLogAdded, restSeconds, targetReps, onSetCompleted }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [logs, setLogs] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [exerciseStats, setExerciseStats] = useState({
-    lastWeight: null,
-    maxWeight: null,
-    maxWeightReps: null,
-    maxWeightDate: null,
-    lastSessionMaxWeight: null,
-    bestE1rm: null,
-    suggestion: null
-  });
+// ============ Übungskarte ============
 
-  const loadLogs = async () => {
-    if (!sessionId) return;
-    try {
-      const res = await fetch(`${API_BASE}/sessions/${sessionId}`);
-      const data = await res.json();
-      const exerciseLogs = data.logs?.filter(l => l.exercise_id === exercise.id) || [];
-      setLogs(exerciseLogs);
-    } catch (error) {
-      console.error('Error loading logs:', error);
-    }
-  };
-
-  const loadExerciseStats = async () => {
-    try {
-      const [historyRes, recordsRes] = await Promise.all([
-        fetch(`${API_BASE}/exercises/${exercise.id}/history`),
-        fetch(`${API_BASE}/exercises/${exercise.id}/records`)
-      ]);
-      const history = await historyRes.json();
-      const records = await recordsRes.json();
-      const suggestion = suggestNextWeight(history, sessionId, targetReps);
-
-      // Get last weight from history (excluding current session)
-      const lastLog = history.find(log => log.session_id !== sessionId && log.weight_kg > 0);
-
-      // Get max weight from last session (excluding current session)
-      const lastSessionLogs = history.filter(log =>
-        log.session_id !== sessionId &&
-        log.session_id === lastLog?.session_id &&
-        log.weight_kg > 0
-      );
-      const lastSessionMax = lastSessionLogs.length > 0
-        ? Math.max(...lastSessionLogs.map(log => log.weight_kg))
-        : null;
-
-      // Find the date of max weight
-      const maxWeightLog = history.find(log => log.weight_kg === records?.max_weight);
-
-      setExerciseStats({
-        lastWeight: lastLog?.weight_kg || null,
-        maxWeight: records?.max_weight || null,
-        maxWeightReps: records?.reps_at_max || null,
-        maxWeightDate: maxWeightLog?.session_date || null,
-        lastSessionMaxWeight: lastSessionMax,
-        bestE1rm: parseFloat(records?.best_e1rm) || null,
-        suggestion
-      });
-    } catch (error) {
-      console.error('Error loading exercise stats:', error);
-    }
-  };
+function ExerciseCard({ exercise, logs, sessionId, expanded, onToggle, onSaveSet, onAddSet, onRemoveLastSet, onRemoveExercise, cardRef }) {
+  const [stats, setStats] = useState(null);
+  const [showRpeInfo, setShowRpeInfo] = useState(false);
+  const doneCount = logs.filter(isDone).length;
+  const complete = logs.length > 0 && doneCount === logs.length;
 
   useEffect(() => {
-    if (sessionId) {
-      loadLogs();
-    }
-  }, [sessionId]);
+    if (!expanded || stats) return;
+    (async () => {
+      try {
+        const [historyRes, recordsRes] = await Promise.all([
+          fetch(`${API_BASE}/exercises/${exercise.id}/history`),
+          fetch(`${API_BASE}/exercises/${exercise.id}/records`)
+        ]);
+        const history = await historyRes.json();
+        const records = await recordsRes.json();
+        const previousSets = history.filter(l => l.session_id !== sessionId);
+        const lastSessionId = previousSets[0]?.session_id;
+        setStats({
+          suggestion: suggestNextWeight(history, sessionId, exercise.target_reps),
+          lastSets: previousSets.filter(l => l.session_id === lastSessionId).sort((a, b) => a.set_number - b.set_number),
+          lastDate: previousSets[0]?.session_date || null,
+          maxWeight: toNumber(records?.max_weight) || null,
+          repsAtMax: records?.reps_at_max || null,
+          bestE1rm: toNumber(records?.best_e1rm) || null
+        });
+      } catch (error) {
+        console.error('Error loading exercise stats:', error);
+        setStats({ lastSets: [] });
+      }
+    })();
+  }, [expanded, stats, exercise.id, exercise.target_reps, sessionId]);
 
-  useEffect(() => {
-    if (isExpanded && sessionId) {
-      loadLogs();
-      loadExerciseStats();
-    }
-  }, [isExpanded, sessionId]);
+  const targetMin = exercise.target_reps ? parseTargetReps(exercise.target_reps).min : null;
 
-  const addSet = async () => {
-    if (!sessionId) return;
-    setLoading(true);
-    try {
-      const nextSetNumber = logs.length + 1;
-      const res = await fetch(`${API_BASE}/logs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sessionId,
-          exercise_id: exercise.id,
-          set_number: nextSetNumber,
-          weight_kg: 0,
-          reps: 0
-        })
-      });
-      const newLog = await res.json();
-      setLogs([...logs, newLog]);
-      onLogAdded?.();
-    } catch (error) {
-      console.error('Error adding set:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const updateLog = async (log) => {
-    const previous = logs.find(l => l.id === log.id);
-    const unchanged = previous &&
-      parseFloat(previous.weight_kg) === log.weight_kg &&
-      (parseInt(previous.reps) || 0) === log.reps &&
-      (previous.rpe || null) === log.rpe;
-    if (unchanged) return;
-
-    setLogs(current => current.map(l => (l.id === log.id ? { ...l, ...log } : l)));
-
-    // Satz frisch erledigt (vorher 0 Wdh) → Pausen-Timer starten
-    if (previous && !(parseInt(previous.reps) > 0) && log.reps > 0) {
-      onSetCompleted?.(restSeconds || 90, exercise.name);
-    }
-
-    await putWithRetry(`${API_BASE}/logs/${log.id}`, {
-      weight_kg: log.weight_kg,
-      reps: log.reps,
-      rpe: log.rpe
-    });
+  // Platzhalter pro Satz: vorheriger erledigter Satz dieser Session > Vorschlag > gleicher Satz vom letzten Mal
+  const placeholderFor = (index) => {
+    const lastTime = stats?.lastSets?.[index];
+    const prevInSession = index > 0 && isDone(logs[index - 1]) ? logs[index - 1] : null;
+    return {
+      weight: toNumber(prevInSession?.weight_kg) || stats?.suggestion?.weight || toNumber(lastTime?.weight_kg) || null,
+      reps: parseInt(lastTime?.reps) || parseInt(prevInSession?.reps) || targetMin || null
+    };
   };
 
   const applySuggestion = () => {
-    const weight = exerciseStats.suggestion?.weight;
+    const weight = stats?.suggestion?.weight;
     if (!weight) return;
-    logs
-      .filter(l => !(parseFloat(l.weight_kg) > 0))
-      .forEach(l => updateLog({ ...l, weight_kg: weight, reps: parseInt(l.reps) || 0, rpe: l.rpe || null }));
-  };
-
-  const deleteLog = async (logId) => {
-    try {
-      await fetch(`${API_BASE}/logs/${logId}`, { method: 'DELETE' });
-      setLogs(logs.filter(l => l.id !== logId));
-    } catch (error) {
-      console.error('Error deleting log:', error);
-    }
+    logs.filter(l => !isDone(l) && !toNumber(l.weight_kg))
+      .forEach(l => onSaveSet(exercise, l, { weight_kg: weight, reps: 0, rpe: l.rpe || null }));
   };
 
   return (
-    <div className="bg-iron-900 rounded-xl overflow-hidden">
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center gap-4 p-4 hover:bg-iron-800/50 transition-colors"
-      >
-        <div className="w-10 h-10 bg-iron-800 rounded-lg flex items-center justify-center">
-          <span className="text-rust-400 font-bold text-sm">{logs.length || 0}</span>
+    <div ref={cardRef} className={`card overflow-hidden scroll-mt-40 transition-colors ${complete && !expanded ? 'opacity-70' : ''}`}>
+      <button onClick={onToggle} className="w-full flex items-center gap-3 p-4 text-left hover:bg-iron-800/40 transition-colors">
+        <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+          complete ? 'bg-emerald-500 text-white' : 'bg-iron-800 text-rust-400'
+        }`}>
+          {complete
+            ? <Check className="w-5 h-5" strokeWidth={3} />
+            : <span className="font-mono font-bold text-sm">{doneCount}/{logs.length}</span>}
         </div>
-        <div className="flex-1 text-left">
-          <p className="text-iron-100 font-medium">{exercise.name}</p>
-          {!isExpanded ? (
-            <p className="text-iron-500 text-sm">{exercise.muscle_group}</p>
-          ) : (
-            <div className="mt-1 space-y-1">
-              <p className="text-iron-500 text-sm">{exercise.muscle_group}</p>
-              {(exerciseStats.lastWeight || exerciseStats.lastSessionMaxWeight) && (
-                <div className="flex items-center gap-3 text-xs">
-                  {exerciseStats.lastWeight && (
-                    <span className="text-iron-400">
-                      Letztes: <span className="text-iron-300 font-medium">{exerciseStats.lastWeight}kg</span>
-                    </span>
-                  )}
-                  {exerciseStats.lastSessionMaxWeight && (
-                    <span className="text-iron-400">
-                      Session-Max: <span className="text-iron-300 font-medium">{exerciseStats.lastSessionMaxWeight}kg</span>
-                    </span>
-                  )}
-                </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-iron-50 font-semibold truncate">{exercise.name}</p>
+          <p className="text-iron-500 text-sm truncate">
+            {exercise.muscle_group}
+            {exercise.target_reps && <> · Ziel {logs.length}×{exercise.target_reps}</>}
+          </p>
+        </div>
+        <ChevronDown className={`w-5 h-5 text-iron-400 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+      </button>
+
+      {expanded && (
+        <div className="px-2 sm:px-4 pb-4">
+          {/* Kennzahlen */}
+          {stats && (stats.maxWeight || stats.lastDate) && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 px-2 pb-3 text-xs text-iron-400">
+              {stats.lastDate && <span>Zuletzt {relativeDay(stats.lastDate)}</span>}
+              {stats.maxWeight && (
+                <span className="flex items-center gap-1">
+                  <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-iron-200 font-medium">{formatKg(stats.maxWeight)} kg</span>
+                  {stats.repsAtMax && <>× {stats.repsAtMax}</>}
+                </span>
               )}
-              {exerciseStats.maxWeight && (
-                <div className="text-xs text-iron-400">
-                  Rekord: <span className="text-rust-400 font-medium">{exerciseStats.maxWeight}kg</span>
-                  {exerciseStats.maxWeightReps && (
-                    <span className="text-iron-400"> × {exerciseStats.maxWeightReps} Wdh</span>
-                  )}
-                  {exerciseStats.maxWeightDate && (
-                    <span className="text-iron-500"> • {new Date(exerciseStats.maxWeightDate).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
-                  )}
-                  {exerciseStats.bestE1rm && (
-                    <span className="text-iron-400"> • e1RM <span className="text-iron-300 font-medium">{formatKg(exerciseStats.bestE1rm)}kg</span></span>
-                  )}
-                </div>
+              {stats.bestE1rm && <span>e1RM <span className="text-iron-200 font-medium">{formatKg(stats.bestE1rm)} kg</span></span>}
+            </div>
+          )}
+
+          {/* Progressionsvorschlag */}
+          {stats?.suggestion && (
+            <div className="mx-2 mb-3 p-3 bg-rust-500/10 border border-rust-500/25 rounded-xl flex items-center gap-3">
+              <Sparkles className="w-4 h-4 text-rust-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-iron-100 text-sm">
+                  Heute: <span className="font-semibold text-rust-400">{formatKg(stats.suggestion.weight)} kg</span>
+                  <span className="text-iron-400"> × {stats.suggestion.targetReps}</span>
+                </p>
+                <p className="text-iron-500 text-xs">{stats.suggestion.reason}</p>
+              </div>
+              {logs.some(l => !isDone(l) && !toNumber(l.weight_kg)) && (
+                <button onClick={applySuggestion} className="px-3 py-2 rounded-lg bg-rust-500 hover:bg-rust-600 text-white text-xs font-semibold shrink-0">
+                  Übernehmen
+                </button>
               )}
             </div>
           )}
-        </div>
-        <ChevronDown className={`w-5 h-5 text-iron-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-      </button>
 
-      {isExpanded && (
-        <div className="px-4 pb-4 border-t border-iron-800">
-          <div className="pt-3">
-            {/* Progressionsvorschlag */}
-            {exerciseStats.suggestion && (
-              <div className="mb-3 p-3 bg-rust-500/10 border border-rust-500/30 rounded-lg flex items-center gap-3">
-                <Sparkles className="w-4 h-4 text-rust-400 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-iron-100 text-sm">
-                    Vorschlag: <span className="font-semibold text-rust-400">{formatKg(exerciseStats.suggestion.weight)} kg</span>
-                    <span className="text-iron-400"> × {exerciseStats.suggestion.targetReps} Wdh</span>
-                  </p>
-                  <p className="text-iron-500 text-xs">
-                    {exerciseStats.suggestion.reason} (zuletzt {formatKg(exerciseStats.suggestion.lastWeight)} kg)
-                  </p>
-                </div>
-                {logs.some(l => !(parseFloat(l.weight_kg) > 0)) && (
-                  <button
-                    onClick={applySuggestion}
-                    className="px-3 py-1.5 rounded-lg bg-rust-500 hover:bg-rust-600 text-white text-xs font-medium shrink-0"
-                  >
-                    Übernehmen
-                  </button>
-                )}
-              </div>
-            )}
+          {/* Kopfzeile */}
+          <div className="grid grid-cols-[1.75rem_3.5rem_1fr_1fr_2.75rem_2.75rem] gap-1.5 px-2 pb-1 text-[11px] uppercase tracking-wider text-iron-500 text-center">
+            <span>Satz</span>
+            <span>Vorher</span>
+            <span>kg</span>
+            <span>Wdh</span>
+            <button onClick={() => setShowRpeInfo(v => !v)} className="flex items-center justify-center gap-0.5 hover:text-iron-200" aria-label="RPE erklären">
+              RPE <Info className="w-3 h-3" />
+            </button>
+            <span />
+          </div>
 
-            {/* RPE Legend */}
-            <div className="mb-3 p-2 bg-iron-800/50 rounded-lg">
-              <p className="text-iron-400 text-xs font-medium mb-1">RPE Skala (Rate of Perceived Exertion):</p>
-              <div className="grid grid-cols-2 gap-1 text-[10px] text-iron-500">
-                <span>1-3: Sehr leicht</span>
-                <span>4-6: Moderat</span>
-                <span>7-8: Schwer (2-3 Wdh Reserve)</span>
-                <span>9-10: Maximal (0-1 Wdh Reserve)</span>
-              </div>
+          {showRpeInfo && (
+            <div className="mx-2 mb-2 p-3 bg-iron-800/60 rounded-xl text-xs text-iron-400 grid grid-cols-2 gap-1">
+              <span className="col-span-2 text-iron-300 font-medium">RPE – gefühlte Anstrengung (optional)</span>
+              <span>1–6: leicht bis moderat</span>
+              <span>7: 3 Wdh Reserve</span>
+              <span>8: 2 Wdh Reserve</span>
+              <span>9–10: 1–0 Wdh Reserve</span>
             </div>
+          )}
 
-            {/* Header */}
-            <div className="flex items-center gap-2 py-2 text-iron-500 text-xs uppercase tracking-wider">
-              <span className="w-8 text-center">Set</span>
-              <span className="w-20 text-center">Gewicht</span>
-              <span className="w-4"></span>
-              <span className="w-16 text-center">Wdh</span>
-              <span className="w-16 text-center">RPE</span>
-              <span className="w-8"></span>
-            </div>
-
-            {/* Sets */}
-            {logs.map((log) => (
+          <div className="space-y-0.5">
+            {logs.map((log, i) => (
               <SetRow
                 key={log.id}
                 set={log}
-                onUpdate={updateLog}
-                onDelete={() => deleteLog(log.id)}
+                index={i}
+                previous={stats?.lastSets?.[i]}
+                placeholder={placeholderFor(i)}
+                onSave={(set, values) => onSaveSet(exercise, set, values)}
               />
             ))}
+          </div>
 
-            {/* Add Set Button */}
-            <button
-              onClick={addSet}
-              disabled={loading || !sessionId}
-              className="w-full mt-2 py-2 border-2 border-dashed border-iron-700 rounded-lg text-iron-400 hover:border-rust-500 hover:text-rust-400 transition-colors flex items-center justify-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Satz hinzufügen
+          <div className="flex gap-2 mt-3 px-2">
+            <button onClick={() => onAddSet(exercise)} className="btn-secondary flex-1 !py-2.5">
+              <Plus className="w-4 h-4" /> Satz
+            </button>
+            {logs.length > 0 && (
+              <button onClick={() => onRemoveLastSet(exercise)} className="btn-secondary !px-3.5" aria-label="Letzten Satz entfernen" title="Letzten Satz entfernen">
+                <Minus className="w-4 h-4" />
+              </button>
+            )}
+            <button onClick={() => onRemoveExercise(exercise)} className="btn-secondary !px-3.5 hover:!text-red-400" aria-label="Übung entfernen" title="Übung aus dem Training entfernen">
+              <Trash2 className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -335,20 +319,34 @@ function ExerciseCard({ exercise, sessionId, onLogAdded, restSeconds, targetReps
   );
 }
 
+// ============ Seite ============
+
 export default function Workout() {
+  const { confirm, toast } = useFeedback();
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const [plans, setPlans] = useState([]);
   const [exercises, setExercises] = useState([]);
-  const [selectedPlan, setSelectedPlan] = useState(null);
-  const [activeSession, setActiveSession] = useState(null);
-  const [editSession, setEditSession] = useState(null);
-  const [sessionExercises, setSessionExercises] = useState([]);
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [showExerciseSelector, setShowExerciseSelector] = useState(false);
   const [recentSessions, setRecentSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedPlan, setSelectedPlan] = useState(null);
+
+  // Geöffnete Session: aktiv (läuft) oder zum Nachbearbeiten
+  const [session, setSession] = useState(null);
+  const [mode, setMode] = useState(null); // 'active' | 'edit' | null
+  const [sessionExercises, setSessionExercises] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [expanded, setExpanded] = useState(new Set());
+  const cardRefs = useRef({});
+
+  const [elapsed, setElapsed] = useState(0);
+  const [showPicker, setShowPicker] = useState(false);
   const [restTimer, setRestTimer] = useState(null);
   const [pendingSync, setPendingSync] = useState(pendingCount());
+  const [starting, setStarting] = useState(false);
 
-  useWakeLock(Boolean(activeSession));
+  const isActive = mode === 'active';
+  useWakeLock(isActive);
   useEffect(() => subscribe(setPendingSync), []);
 
   const startRest = useCallback((seconds, label) => {
@@ -357,466 +355,518 @@ export default function Workout() {
   }, []);
   const closeRest = useCallback(() => setRestTimer(null), []);
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [plansRes, exercisesRes, sessionsRes] = await Promise.all([
-          fetch(`${API_BASE}/plans`),
-          fetch(`${API_BASE}/exercises`),
-          fetch(`${API_BASE}/sessions`)
-        ]);
-        setPlans(await plansRes.json());
-        setExercises(await exercisesRes.json());
-        setRecentSessions((await sessionsRes.json()).slice(0, 10));
-      } catch (error) {
-        console.error('Error loading data:', error);
-      }
+  const loadSessions = useCallback(async () => {
+    const res = await fetch(`${API_BASE}/sessions`);
+    setRecentSessions((await res.json()).slice(0, 15));
+  }, []);
+
+  const openSession = useCallback(async (sessionId, openMode) => {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}`);
+    if (!res.ok) throw new Error('Session nicht gefunden');
+    const data = await res.json();
+    let planExercises = [];
+    if (data.plan_id && openMode === 'active') {
+      const planRes = await fetch(`${API_BASE}/plans/${data.plan_id}`);
+      if (planRes.ok) planExercises = (await planRes.json()).exercises || [];
     }
-    loadData();
+    const list = buildExerciseList(planExercises, data.logs || []);
+    setSession(data);
+    setLogs(data.logs || []);
+    setSessionExercises(list);
+    setMode(openMode);
+    // Erste Übung mit offenen Sätzen aufklappen
+    const firstOpen = list.find(ex => (data.logs || []).some(l => l.exercise_id === ex.id && !isDone(l))) || list[0];
+    setExpanded(new Set(openMode === 'active' && firstOpen ? [firstOpen.id] : []));
+    if (openMode === 'active') storeActiveSession(data);
+    window.scrollTo({ top: 0 });
+    return data;
   }, []);
 
   useEffect(() => {
-    let interval;
-    if (activeSession && !activeSession.completed_at && activeSession.started_at) {
-      const updateElapsed = () => {
-        const startedAt = new Date(activeSession.started_at).getTime();
-        const now = Date.now();
-        setElapsedTime(Math.floor((now - startedAt) / 1000));
-      };
-      updateElapsed();
-      interval = setInterval(updateElapsed, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [activeSession]);
+    (async () => {
+      try {
+        const [plansRes, exercisesRes] = await Promise.all([
+          fetch(`${API_BASE}/plans`),
+          fetch(`${API_BASE}/exercises`),
+          loadSessions()
+        ]);
+        const plansData = await plansRes.json();
+        setPlans(plansData);
+        setExercises(await exercisesRes.json());
 
-  const formatTime = (seconds) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    if (hrs > 0) {
-      return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+        const planParam = parseInt(searchParams.get('plan'));
+        if (planParam && plansData.some(p => p.id === planParam)) setSelectedPlan(planParam);
 
-  const loadPlanExercises = async (planId) => {
-    try {
-      const res = await fetch(`${API_BASE}/plans/${planId}`);
-      const data = await res.json();
-      setSessionExercises(data.exercises || []);
-    } catch (error) {
-      console.error('Error loading plan:', error);
-    }
-  };
-
-  // Offene Session (z. B. nach Neuladen der Seite) als aktives Training fortsetzen
-  const resumeSession = async (sessionId) => {
-    try {
-      const res = await fetch(`${API_BASE}/sessions/${sessionId}`);
-      const data = await res.json();
-      let planExercises = [];
-      if (data.plan_id) {
-        const planRes = await fetch(`${API_BASE}/plans/${data.plan_id}`);
-        if (planRes.ok) planExercises = (await planRes.json()).exercises || [];
-      }
-      const known = new Set(planExercises.map(e => e.exercise_id));
-      const extra = [];
-      data.logs?.forEach(log => {
-        if (!known.has(log.exercise_id)) {
-          known.add(log.exercise_id);
-          extra.push({ id: log.exercise_id, exercise_id: log.exercise_id, name: log.exercise_name, muscle_group: log.muscle_group });
+        // Laufendes Training dieses Geräts automatisch fortsetzen
+        const stored = getActiveSession();
+        if (stored?.id) {
+          try {
+            const data = await openSession(stored.id, 'active');
+            if (data.completed_at) {
+              // Auf einem anderen Gerät beendet
+              storeActiveSession(null);
+              setSession(null);
+              setMode(null);
+            }
+          } catch {
+            storeActiveSession(null);
+          }
         }
-      });
-      setEditSession(null);
-      setSelectedPlan(data.plan_id || null);
-      setSessionExercises([...planExercises, ...extra]);
-      setActiveSession(data);
-    } catch (error) {
-      console.error('Error resuming session:', error);
-    }
+      } catch (error) {
+        console.error('Error loading data:', error);
+      } finally {
+        setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!isActive || !session?.started_at) return;
+    const update = () => setElapsed((Date.now() - new Date(session.started_at).getTime()) / 1000);
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [isActive, session]);
+
+  const closeSession = () => {
+    if (mode === 'active') storeActiveSession(null);
+    setSession(null);
+    setMode(null);
+    setLogs([]);
+    setSessionExercises([]);
+    setExpanded(new Set());
+    setRestTimer(null);
   };
+
+  // ---------- Session-Aktionen ----------
 
   const startSession = async () => {
+    setStarting(true);
+    unlockAudio();
     try {
       const res = await fetch(`${API_BASE}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           plan_id: selectedPlan || null,
-          session_date: new Date().toISOString().split('T')[0]
+          session_date: new Date().toLocaleDateString('sv-SE') // YYYY-MM-DD in lokaler Zeit
         })
       });
-      const session = await res.json();
-      setActiveSession(session);
-      setElapsedTime(0);
-
-      if (selectedPlan) {
-        await loadPlanExercises(selectedPlan);
-      }
-    } catch (error) {
-      console.error('Error starting session:', error);
+      if (!res.ok) throw new Error();
+      const created = await res.json();
+      if (searchParams.has('plan')) setSearchParams({}, { replace: true });
+      await openSession(created.id, 'active');
+      if (!selectedPlan) setShowPicker(true);
+    } catch {
+      toast('Training konnte nicht gestartet werden', 'error');
+    } finally {
+      setStarting(false);
     }
   };
 
+  const summary = useMemo(() => {
+    const done = logs.filter(isDone);
+    return {
+      sets: done.length,
+      total: logs.length,
+      volume: done.reduce((sum, l) => sum + toNumber(l.weight_kg) * l.reps, 0),
+      exercises: new Set(done.map(l => l.exercise_id)).size
+    };
+  }, [logs]);
+
   const completeSession = async (sessionId) => {
-    const id = sessionId || activeSession?.id;
+    const id = sessionId || session?.id;
     if (!id) return;
+    if (!sessionId) {
+      const open = summary.total - summary.sets;
+      const ok = await confirm({
+        title: 'Training beenden?',
+        message: summary.sets === 0
+          ? 'Du hast noch keinen Satz abgehakt. Das Training wird trotzdem gespeichert.'
+          : `${summary.sets} Sätze aus ${summary.exercises} ${summary.exercises === 1 ? 'Übung' : 'Übungen'}, ${formatKg(summary.volume)} kg Volumen.${open > 0 ? ` ${open} offene Sätze werden ignoriert.` : ''}`,
+        confirmLabel: 'Beenden'
+      });
+      if (!ok) return;
+    }
     try {
       await fetch(`${API_BASE}/sessions/${id}/complete`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})
       });
-      if (!sessionId) {
-        // Completing active session
-        setActiveSession(null);
-        setSessionExercises([]);
-        setSelectedPlan(null);
-        setRestTimer(null);
+      if (!sessionId || sessionId === session?.id) {
+        closeSession();
+        toast(summary.sets > 0 ? `Stark! ${summary.sets} Sätze gespeichert` : 'Training abgeschlossen');
+      } else {
+        toast('Training abgeschlossen');
       }
-      // Reload sessions
-      const sessionsRes = await fetch(`${API_BASE}/sessions`);
-      setRecentSessions((await sessionsRes.json()).slice(0, 10));
-    } catch (error) {
-      console.error('Error completing session:', error);
+      await loadSessions();
+    } catch {
+      toast('Abschließen fehlgeschlagen', 'error');
     }
-  };
-
-  const addExerciseToSession = (exercise) => {
-    if (!sessionExercises.find(e => e.exercise_id === exercise.id || e.id === exercise.id)) {
-      setSessionExercises([...sessionExercises, {
-        ...exercise,
-        exercise_id: exercise.id
-      }]);
-    }
-    setShowExerciseSelector(false);
-  };
-
-  const loadSessionForEdit = async (sessionId) => {
-    try {
-      const res = await fetch(`${API_BASE}/sessions/${sessionId}`);
-      const data = await res.json();
-      setEditSession(data);
-
-      // Extract unique exercises from logs
-      const uniqueExercises = [];
-      const exerciseIds = new Set();
-
-      data.logs?.forEach(log => {
-        if (!exerciseIds.has(log.exercise_id)) {
-          exerciseIds.add(log.exercise_id);
-          uniqueExercises.push({
-            id: log.exercise_id,
-            exercise_id: log.exercise_id,
-            name: log.exercise_name,
-            muscle_group: log.muscle_group
-          });
-        }
-      });
-
-      setSessionExercises(uniqueExercises);
-    } catch (error) {
-      console.error('Error loading session:', error);
-    }
-  };
-
-  const closeEditSession = () => {
-    setEditSession(null);
-    setSessionExercises([]);
   };
 
   const deleteSession = async (sessionId) => {
-    if (!confirm('Möchtest du dieses Training wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.')) {
-      return;
-    }
-
+    const ok = await confirm({
+      title: 'Training löschen?',
+      message: 'Alle Sätze dieses Trainings werden entfernt. Das kann nicht rückgängig gemacht werden.',
+      confirmLabel: 'Löschen',
+      danger: true
+    });
+    if (!ok) return;
     try {
-      await fetch(`${API_BASE}/sessions/${sessionId}`, {
-        method: 'DELETE'
-      });
-
-      // Reload sessions list
-      const sessionsRes = await fetch(`${API_BASE}/sessions`);
-      setRecentSessions((await sessionsRes.json()).slice(0, 10));
-
-      // Close edit mode if this session was being edited
-      if (editSession?.id === sessionId) {
-        closeEditSession();
-      }
-    } catch (error) {
-      console.error('Error deleting session:', error);
-      alert('Fehler beim Löschen des Trainings');
+      await fetch(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE' });
+      if (session?.id === sessionId) closeSession();
+      await loadSessions();
+      toast('Training gelöscht');
+    } catch {
+      toast('Löschen fehlgeschlagen', 'error');
     }
   };
 
-  // Group exercises by muscle group
-  const groupedExercises = exercises.reduce((acc, ex) => {
-    if (!acc[ex.muscle_group]) acc[ex.muscle_group] = [];
-    acc[ex.muscle_group].push(ex);
-    return acc;
-  }, {});
+  // ---------- Satz-Aktionen ----------
 
-  return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-4xl mx-auto">
-      <header className="mb-8">
-        <h1 className="font-display text-3xl md:text-4xl font-bold text-iron-100 tracking-wide">
-          Training
-        </h1>
-        <p className="text-iron-500 mt-1">Starte eine neue Session oder dokumentiere dein Training</p>
-      </header>
+  const logsFor = (exerciseId) =>
+    logs.filter(l => l.exercise_id === exerciseId).sort((a, b) => a.set_number - b.set_number || a.id - b.id);
 
-      {!activeSession && !editSession ? (
-        <>
-          {/* Start Session Card */}
-          <div className="bg-iron-900 rounded-xl p-6 mb-6">
-            <h2 className="section-title text-iron-400 text-sm mb-4">Neue Session</h2>
+  const createSets = async (exercise, count, startNumber, weight = 0) => {
+    const created = [];
+    for (let i = 0; i < count; i++) {
+      const res = await fetch(`${API_BASE}/logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: session.id,
+          exercise_id: exercise.id,
+          set_number: startNumber + i,
+          weight_kg: weight,
+          reps: 0
+        })
+      });
+      if (!res.ok) throw new Error();
+      created.push({ ...(await res.json()), exercise_name: exercise.name, muscle_group: exercise.muscle_group });
+    }
+    setLogs(current => [...current, ...created]);
+  };
 
-            <div className="mb-4">
-              <label className="block text-iron-400 text-sm mb-2">Trainingsplan (optional)</label>
-              <select
-                value={selectedPlan || ''}
-                onChange={(e) => setSelectedPlan(e.target.value ? parseInt(e.target.value) : null)}
-                className="input-field w-full"
-              >
-                <option value="">Freies Training</option>
-                {plans.map(plan => (
-                  <option key={plan.id} value={plan.id}>{plan.name}</option>
-                ))}
-              </select>
-            </div>
+  const expandNext = (exerciseId, updatedLogs) => {
+    const idx = sessionExercises.findIndex(e => e.id === exerciseId);
+    const next = sessionExercises.slice(idx + 1).concat(sessionExercises.slice(0, idx))
+      .find(e => updatedLogs.some(l => l.exercise_id === e.id && !isDone(l)));
+    setExpanded(current => {
+      const s = new Set(current);
+      s.delete(exerciseId);
+      if (next) s.add(next.id);
+      return s;
+    });
+    if (next) {
+      setTimeout(() => cardRefs.current[next.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+    }
+  };
 
-            <button
-              onClick={startSession}
-              className="btn-primary w-full flex items-center justify-center gap-2 py-3"
-            >
-              <Play className="w-5 h-5" />
-              Training starten
-            </button>
-          </div>
+  const saveSet = (exercise, set, values) => {
+    const previous = logs.find(l => l.id === set.id);
+    if (!previous) return;
+    const unchanged = toNumber(previous.weight_kg) === values.weight_kg &&
+      (parseInt(previous.reps) || 0) === values.reps &&
+      (previous.rpe || null) === values.rpe;
+    if (unchanged) return;
 
-          {/* Recent Sessions */}
-          <div className="bg-iron-900 rounded-xl p-6">
-            <h2 className="section-title text-iron-400 text-sm mb-4">Letzte Trainings</h2>
-            {recentSessions.length > 0 ? (
-              <div className="space-y-2">
-                {recentSessions.map(session => (
-                  <div
-                    key={session.id}
-                    onClick={() => loadSessionForEdit(session.id)}
-                    className="flex items-center gap-2 p-3 rounded-lg hover:bg-iron-800/50 transition-colors cursor-pointer group"
-                  >
-                    <div className="w-12 h-12 bg-iron-800 rounded-lg flex flex-col items-center justify-center group-hover:bg-rust-900/30 transition-colors">
-                      <span className="text-rust-400 font-display font-bold text-lg leading-none">
-                        {new Date(session.session_date).getDate()}
-                      </span>
-                      <span className="text-iron-500 text-[10px] uppercase">
-                        {new Date(session.session_date).toLocaleDateString('de-DE', { month: 'short' })}
-                      </span>
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-iron-100 font-medium group-hover:text-rust-400 transition-colors">{session.plan_name || 'Freies Training'}</p>
-                      <p className="text-iron-500 text-sm">
-                        {session.completed_at
-                          ? (session.duration_minutes ? `${session.duration_minutes} Min` : 'Abgeschlossen')
-                          : <span className="text-yellow-500">Offen</span>
-                        }
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      {!session.completed_at && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            resumeSession(session.id);
-                          }}
-                          className="px-3 py-1.5 mr-1 rounded-lg bg-rust-500/15 text-rust-400 hover:bg-rust-500/25 text-sm flex items-center gap-1 transition-colors"
-                          title="Als aktives Training fortsetzen"
-                        >
-                          <RotateCcw className="w-4 h-4" />
-                          Fortsetzen
-                        </button>
-                      )}
-                      {!session.completed_at && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            completeSession(session.id);
-                          }}
-                          className="p-2 text-iron-400 hover:text-green-400 transition-colors opacity-0 group-hover:opacity-100"
-                          title="Training abschließen"
-                        >
-                          <Check className="w-5 h-5" />
-                        </button>
-                      )}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteSession(session.id);
-                        }}
-                        className="p-2 text-iron-400 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
-                        title="Training löschen"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
-                    </div>
+    const updatedLogs = logs.map(l => (l.id === set.id ? { ...l, ...values } : l));
+    setLogs(updatedLogs);
+
+    const justDone = !isDone(previous) && values.reps > 0;
+    if (justDone && isActive) {
+      const exerciseLogs = updatedLogs.filter(l => l.exercise_id === exercise.id);
+      if (exerciseLogs.every(isDone)) {
+        expandNext(exercise.id, updatedLogs);
+        if (updatedLogs.every(isDone)) {
+          toast('Alle Sätze erledigt – Training beenden?', 'info');
+        } else {
+          startRest(exercise.rest_seconds || 90, exercise.name);
+        }
+      } else {
+        startRest(exercise.rest_seconds || 90, exercise.name);
+      }
+    }
+
+    putWithRetry(`${API_BASE}/logs/${set.id}`, values);
+  };
+
+  const addSet = async (exercise) => {
+    const existing = logsFor(exercise.id);
+    const last = existing[existing.length - 1];
+    try {
+      await createSets(exercise, 1, (last?.set_number || 0) + 1, toNumber(last?.weight_kg));
+    } catch {
+      toast('Satz konnte nicht angelegt werden', 'error');
+    }
+  };
+
+  const removeSets = async (setIds) => {
+    await Promise.all(setIds.map(id => fetch(`${API_BASE}/logs/${id}`, { method: 'DELETE' })));
+    setLogs(current => current.filter(l => !setIds.includes(l.id)));
+  };
+
+  const removeLastSet = async (exercise) => {
+    const existing = logsFor(exercise.id);
+    const last = existing[existing.length - 1];
+    if (!last) return;
+    if (isDone(last) && !(await confirm({ title: 'Satz entfernen?', message: `Satz ${existing.length} (${formatKg(last.weight_kg)} kg × ${last.reps}) wird gelöscht.`, confirmLabel: 'Entfernen', danger: true }))) return;
+    await removeSets([last.id]);
+  };
+
+  const removeExercise = async (exercise) => {
+    const existing = logsFor(exercise.id);
+    if (existing.some(isDone) && !(await confirm({
+      title: `${exercise.name} entfernen?`,
+      message: `${existing.filter(isDone).length} erledigte Sätze werden gelöscht.`,
+      confirmLabel: 'Entfernen',
+      danger: true
+    }))) return;
+    await removeSets(existing.map(l => l.id));
+    setSessionExercises(current => current.filter(e => e.id !== exercise.id));
+  };
+
+  const addExerciseToSession = async (exercise) => {
+    setShowPicker(false);
+    const entry = { id: exercise.id, name: exercise.name, muscle_group: exercise.muscle_group };
+    setSessionExercises(current => [...current, entry]);
+    setExpanded(current => new Set(isActive ? [entry.id] : [...current, entry.id]));
+    try {
+      await createSets(entry, DEFAULT_SETS, 1);
+      setTimeout(() => cardRefs.current[entry.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+    } catch {
+      toast('Übung konnte nicht hinzugefügt werden', 'error');
+    }
+  };
+
+  const toggleExpanded = (id) => setExpanded(current => {
+    const s = new Set(current);
+    s.has(id) ? s.delete(id) : s.add(id);
+    return s;
+  });
+
+  // ============ Render ============
+
+  if (loading) return <Spinner fullPage />;
+
+  if (session) {
+    const progress = summary.total ? summary.sets / summary.total : 0;
+    return (
+      <div className="max-w-3xl mx-auto">
+        {/* Kopf bleibt beim Scrollen sichtbar */}
+        <div className="sticky top-0 z-30 px-4 md:px-6 lg:px-8 pt-3 md:pt-6 pb-3 bg-iron-950/85 backdrop-blur-md">
+          {isActive ? (
+            <div className="rounded-2xl p-4 bg-gradient-to-br from-rust-500 to-rust-600 shadow-xl shadow-rust-900/30">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-white/80 text-xs uppercase tracking-wider truncate">{session.plan_name || 'Freies Training'}</p>
+                  <div className="flex items-center gap-2">
+                    <Timer className="w-5 h-5 text-white/90" />
+                    <span className="metric-value text-3xl text-white">{formatDuration(elapsed)}</span>
                   </div>
-                ))}
+                </div>
+                <button onClick={() => completeSession()} className="bg-white text-rust-600 hover:bg-white/90 font-semibold px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors shadow-lg">
+                  <Flag className="w-4 h-4" />
+                  Beenden
+                </button>
               </div>
-            ) : (
-              <p className="text-iron-500 text-center py-4">Noch keine Trainings</p>
-            )}
-          </div>
-        </>
-      ) : editSession ? (
-        <>
-          {/* Edit Session Header */}
-          <div className="bg-iron-900 rounded-xl p-5 mb-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-iron-400 text-sm">Training bearbeiten</p>
-                <p className="text-iron-100 font-medium mt-1">
-                  {editSession.plan_name || 'Freies Training'} • {new Date(editSession.session_date).toLocaleDateString('de-DE')}
+              <div className="mt-3 flex items-center gap-3">
+                <div className="flex-1 h-1.5 rounded-full bg-black/20 overflow-hidden">
+                  <div className="h-full bg-white rounded-full transition-all duration-500" style={{ width: `${progress * 100}%` }} />
+                </div>
+                <span className="text-white/90 text-xs font-mono">{summary.sets}/{summary.total} Sätze</span>
+              </div>
+              {pendingSync > 0 && (
+                <p className="flex items-center gap-1 text-white/90 text-xs mt-2">
+                  <WifiOff className="w-3.5 h-3.5" />
+                  {pendingSync} {pendingSync === 1 ? 'Satz wartet' : 'Sätze warten'} auf Verbindung
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="card p-4 flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-iron-500 text-xs uppercase tracking-wider">Training bearbeiten</p>
+                <p className="text-iron-50 font-semibold truncate">
+                  {session.plan_name || 'Freies Training'} · {formatDate(session.session_date)}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => deleteSession(editSession.id)}
-                  className="bg-red-900/20 hover:bg-red-900/30 text-red-400 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Löschen
+              {!session.completed_at && (
+                <button onClick={() => completeSession(session.id)} className="icon-btn hover:!text-emerald-400" title="Abschließen" aria-label="Abschließen">
+                  <Check className="w-5 h-5" />
                 </button>
-                <button
-                  onClick={closeEditSession}
-                  className="bg-iron-800 hover:bg-iron-700 text-iron-300 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                  Schließen
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Exercise List */}
-          <div className="space-y-3 mb-4">
-            {sessionExercises.map((exercise, index) => (
-              <ExerciseCard
-                key={exercise.exercise_id || exercise.id}
-                exercise={{
-                  id: exercise.exercise_id || exercise.id,
-                  name: exercise.name,
-                  muscle_group: exercise.muscle_group
-                }}
-                sessionId={editSession.id}
-                onLogAdded={() => loadSessionForEdit(editSession.id)}
-              />
-            ))}
-          </div>
-
-          {/* Add Exercise Button */}
-          <button
-            onClick={() => setShowExerciseSelector(true)}
-            className="w-full py-4 border-2 border-dashed border-iron-700 rounded-xl text-iron-400 hover:border-rust-500 hover:text-rust-400 transition-colors flex items-center justify-center gap-2"
-          >
-            <Plus className="w-5 h-5" />
-            Übung hinzufügen
-          </button>
-        </>
-      ) : (
-        <>
-          {/* Active Session Header */}
-          <div className="bg-gradient-to-r from-rust-600 to-rust-500 rounded-xl p-5 mb-6 animate-pulse-glow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-white/80 text-sm">Aktives Training</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <Timer className="w-5 h-5 text-white" />
-                  <span className="metric-value text-2xl text-white">{formatTime(elapsedTime)}</span>
-                </div>
-                {pendingSync > 0 && (
-                  <p className="flex items-center gap-1 text-white/90 text-xs mt-1">
-                    <WifiOff className="w-3.5 h-3.5" />
-                    {pendingSync} {pendingSync === 1 ? 'Satz wartet' : 'Sätze warten'} auf Verbindung
-                  </p>
-                )}
-              </div>
-              <button
-                onClick={completeSession}
-                className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-              >
-                <Square className="w-4 h-4" />
-                Beenden
+              )}
+              <button onClick={() => deleteSession(session.id)} className="icon-btn hover:!text-red-400" title="Löschen" aria-label="Training löschen">
+                <Trash2 className="w-5 h-5" />
+              </button>
+              <button onClick={closeSession} className="btn-secondary !py-2">
+                <X className="w-4 h-4" /> Fertig
               </button>
             </div>
-          </div>
+          )}
+        </div>
 
-          {/* Exercise List */}
+        <div className="px-4 md:px-6 lg:px-8 pb-6">
           <div className="space-y-3 mb-4">
-            {sessionExercises.map((exercise, index) => (
+            {sessionExercises.map(exercise => (
               <ExerciseCard
-                key={exercise.exercise_id || exercise.id}
-                exercise={{
-                  id: exercise.exercise_id || exercise.id,
-                  name: exercise.name,
-                  muscle_group: exercise.muscle_group
-                }}
-                sessionId={activeSession.id}
-                restSeconds={exercise.rest_seconds}
-                targetReps={exercise.target_reps}
-                onSetCompleted={startRest}
+                key={exercise.id}
+                cardRef={(el) => { cardRefs.current[exercise.id] = el; }}
+                exercise={exercise}
+                logs={logsFor(exercise.id)}
+                sessionId={session.id}
+                expanded={expanded.has(exercise.id)}
+                onToggle={() => toggleExpanded(exercise.id)}
+                onSaveSet={saveSet}
+                onAddSet={addSet}
+                onRemoveLastSet={removeLastSet}
+                onRemoveExercise={removeExercise}
               />
             ))}
           </div>
 
-          {/* Add Exercise Button */}
+          {sessionExercises.length === 0 && (
+            <div className="card mb-4">
+              <EmptyState icon={Dumbbell} title="Noch keine Übungen" text="Füge die erste Übung hinzu – drei Sätze werden automatisch angelegt." />
+            </div>
+          )}
+
           <button
-            onClick={() => setShowExerciseSelector(true)}
-            className="w-full py-4 border-2 border-dashed border-iron-700 rounded-xl text-iron-400 hover:border-rust-500 hover:text-rust-400 transition-colors flex items-center justify-center gap-2"
+            onClick={() => setShowPicker(true)}
+            className="w-full py-4 border-2 border-dashed border-iron-700 rounded-2xl text-iron-400 hover:border-rust-500 hover:text-rust-400 transition-colors flex items-center justify-center gap-2 font-medium"
           >
             <Plus className="w-5 h-5" />
             Übung hinzufügen
           </button>
 
-          {/* Platz für den Pausen-Timer, damit er die letzte Karte nicht verdeckt */}
           {restTimer && <div className="h-24" />}
-          <RestTimer timer={restTimer} onChange={setRestTimer} onClose={closeRest} />
-        </>
-      )}
+        </div>
 
-      {/* Exercise Selector Modal - Shared between active and edit sessions */}
-      {showExerciseSelector && (activeSession || editSession) && (
-        <div className="fixed inset-0 bg-black/60 flex items-end md:items-center justify-center z-50 p-4">
-          <div className="bg-iron-900 rounded-xl w-full max-w-lg max-h-[80vh] overflow-hidden">
-            <div className="p-4 border-b border-iron-700 flex items-center justify-between">
-              <h3 className="font-display text-lg text-iron-100">Übung wählen</h3>
-              <button
-                onClick={() => setShowExerciseSelector(false)}
-                className="text-iron-400 hover:text-iron-200"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="overflow-y-auto max-h-96 p-4">
-              {Object.entries(groupedExercises).map(([group, exs]) => (
-                <div key={group} className="mb-4">
-                  <h4 className="text-iron-500 text-xs uppercase tracking-wider mb-2">{group}</h4>
-                  <div className="space-y-1">
-                    {exs.map(ex => (
-                      <button
-                        key={ex.id}
-                        onClick={() => addExerciseToSession(ex)}
-                        className="w-full text-left p-3 rounded-lg hover:bg-iron-800 transition-colors text-iron-100"
-                      >
-                        {ex.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
+        {isActive && <RestTimer timer={restTimer} onChange={setRestTimer} onClose={closeRest} />}
+
+        {showPicker && (
+          <ExercisePicker
+            exercises={exercises}
+            excludeIds={sessionExercises.map(e => e.id)}
+            onSelect={addExerciseToSession}
+            onClose={() => setShowPicker(false)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ---------- Übersicht ----------
+  const openSessions = recentSessions.filter(s => !s.completed_at);
+
+  return (
+    <div className="p-4 md:p-6 lg:p-8 max-w-3xl mx-auto">
+      <PageHeader title="Training" subtitle="Plan wählen und loslegen" />
+
+      {openSessions.length > 0 && (
+        <div className="card p-4 mb-4 flex items-center gap-3 border-amber-500/30">
+          <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center shrink-0">
+            <RotateCcw className="w-5 h-5 text-amber-400" />
           </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-iron-100 font-medium truncate">{openSessions[0].plan_name || 'Freies Training'} ist noch offen</p>
+            <p className="text-iron-500 text-sm">{formatDate(openSessions[0].session_date, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+          </div>
+          <button onClick={() => openSession(openSessions[0].id, 'active')} className="btn-primary !py-2">
+            Fortsetzen
+          </button>
         </div>
       )}
+
+      {/* Plan wählen */}
+      <section className="card p-4 md:p-5 mb-6">
+        <h2 className="section-title text-iron-400 text-sm mb-3">Neues Training</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
+          {plans.map(plan => {
+            const selected = selectedPlan === plan.id;
+            return (
+              <button
+                key={plan.id}
+                onClick={() => setSelectedPlan(selected ? null : plan.id)}
+                className={`text-left p-3 rounded-xl border transition-all active:scale-[0.98] ${
+                  selected
+                    ? 'border-rust-500 bg-rust-500/15 ring-1 ring-rust-500'
+                    : 'border-white/[0.06] bg-iron-800/60 hover:bg-iron-800'
+                }`}
+              >
+                <p className={`font-semibold truncate ${selected ? 'text-rust-300' : 'text-iron-100'}`}>{plan.name}</p>
+                <p className="text-iron-500 text-xs mt-0.5">
+                  {plan.exercise_count} Übungen{plan.last_used && ` · ${relativeDay(plan.last_used)}`}
+                </p>
+              </button>
+            );
+          })}
+          <button
+            onClick={() => setSelectedPlan(null)}
+            className={`text-left p-3 rounded-xl border transition-all active:scale-[0.98] ${
+              selectedPlan === null
+                ? 'border-rust-500 bg-rust-500/15 ring-1 ring-rust-500'
+                : 'border-dashed border-iron-700 hover:bg-iron-800'
+            }`}
+          >
+            <p className={`font-semibold ${selectedPlan === null ? 'text-rust-300' : 'text-iron-100'}`}>Frei</p>
+            <p className="text-iron-500 text-xs mt-0.5">Übungen selbst wählen</p>
+          </button>
+        </div>
+
+        <button onClick={startSession} disabled={starting} className="btn-primary w-full !py-3.5 text-lg">
+          <Play className="w-5 h-5" fill="currentColor" />
+          {starting ? 'Starte…' : selectedPlan ? `${plans.find(p => p.id === selectedPlan)?.name} starten` : 'Freies Training starten'}
+        </button>
+      </section>
+
+      {/* Verlauf */}
+      <section className="card p-2 md:p-3">
+        <h2 className="section-title text-iron-400 text-sm px-3 pt-3 pb-2">Letzte Trainings</h2>
+        {recentSessions.length > 0 ? (
+          <ul>
+            {recentSessions.map(s => (
+              <li key={s.id} className="flex items-center gap-3 p-2 md:p-3 rounded-xl hover:bg-iron-800/50 transition-colors group">
+                <button onClick={() => openSession(s.id, 'edit')} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+                  <div className="w-12 h-12 bg-iron-800 rounded-xl flex flex-col items-center justify-center shrink-0">
+                    <span className="text-rust-400 font-display font-bold text-lg leading-none">{new Date(s.session_date).getDate()}</span>
+                    <span className="text-iron-500 text-[10px] uppercase">{formatDate(s.session_date, { month: 'short' })}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-iron-100 font-medium truncate">{s.plan_name || 'Freies Training'}</p>
+                    <p className="text-iron-500 text-sm truncate">
+                      {!s.completed_at && <span className="text-amber-400">Offen · </span>}
+                      {s.set_count} Sätze
+                      {toNumber(s.volume_kg) > 0 && ` · ${formatKg(toNumber(s.volume_kg) / 1000)} t`}
+                      {s.duration_minutes ? ` · ${s.duration_minutes} Min` : ''}
+                    </p>
+                  </div>
+                </button>
+                <div className="flex items-center shrink-0">
+                  {!s.completed_at && (
+                    <button onClick={() => openSession(s.id, 'active')} className="icon-btn !text-rust-400" title="Fortsetzen" aria-label="Fortsetzen">
+                      <Play className="w-5 h-5" />
+                    </button>
+                  )}
+                  {!s.completed_at && (
+                    <button onClick={() => completeSession(s.id)} className="icon-btn hover:!text-emerald-400" title="Abschließen" aria-label="Abschließen">
+                      <Check className="w-5 h-5" />
+                    </button>
+                  )}
+                  <button onClick={() => deleteSession(s.id)} className="icon-btn hover:!text-red-400 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100" title="Löschen" aria-label="Training löschen">
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <EmptyState icon={CalendarDays} title="Noch keine Trainings" text="Wähle oben einen Plan und starte dein erstes Training." />
+        )}
+      </section>
     </div>
   );
 }

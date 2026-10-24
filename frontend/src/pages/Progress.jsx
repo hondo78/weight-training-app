@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { TrendingUp, Trophy, ChevronDown, Gauge } from 'lucide-react';
+import { TrendingUp, Trophy, ChevronDown, Gauge, Search } from 'lucide-react';
+import { PageHeader, Spinner, EmptyState } from '../components/ui';
 import { Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ComposedChart, Area } from 'recharts';
 import TrainingCalendar from '../components/TrainingCalendar';
 import WeeklyVolumeChart from '../components/WeeklyVolumeChart';
@@ -60,17 +61,20 @@ function ExerciseProgressCard({ exercise }) {
   }, [isExpanded]);
 
   return (
-    <div className="bg-iron-900 rounded-xl overflow-hidden">
+    <div className="card overflow-hidden">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full flex items-center gap-4 p-4 hover:bg-iron-800/30 transition-colors"
       >
-        <div className="w-10 h-10 bg-gradient-to-br from-rust-400 to-rust-600 rounded-lg flex items-center justify-center">
+        <div className="w-10 h-10 bg-gradient-to-br from-rust-400 to-rust-600 rounded-xl flex items-center justify-center shrink-0">
           <TrendingUp className="w-5 h-5 text-white" />
         </div>
-        <div className="flex-1 text-left">
-          <p className="text-iron-100 font-medium">{exercise.name}</p>
-          <p className="text-iron-500 text-sm">{exercise.muscle_group}</p>
+        <div className="flex-1 min-w-0 text-left">
+          <p className="text-iron-50 font-medium truncate">{exercise.name}</p>
+          <p className="text-iron-500 text-sm truncate">
+            {exercise.muscle_group}
+            {exercise.set_count > 0 && <> · {exercise.set_count} Sätze · zuletzt {new Date(exercise.last_trained).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}</>}
+          </p>
         </div>
         <ChevronDown className={`w-5 h-5 text-iron-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
       </button>
@@ -192,6 +196,8 @@ export default function Progress() {
   const [exercises, setExercises] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('Alle');
+  const [query, setQuery] = useState('');
+  const [showUntrained, setShowUntrained] = useState(false);
 
   useEffect(() => {
     async function loadExercises() {
@@ -207,53 +213,52 @@ export default function Progress() {
     loadExercises();
   }, []);
 
-  const muscleGroups = ['Alle', ...new Set(exercises.map(ex => ex.muscle_group))];
-  const filteredExercises = filter === 'Alle' 
-    ? exercises 
-    : exercises.filter(ex => ex.muscle_group === filter);
+  if (loading) return <Spinner fullPage />;
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="w-8 h-8 border-2 border-rust-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
+  const trainedCount = exercises.filter(ex => ex.set_count > 0).length;
+  const pool = showUntrained ? exercises : exercises.filter(ex => ex.set_count > 0);
+  const muscleGroups = ['Alle', ...new Set(pool.map(ex => ex.muscle_group))];
+  const q = query.trim().toLowerCase();
+  // Zuletzt trainierte zuerst
+  const filteredExercises = pool
+    .filter(ex => filter === 'Alle' || ex.muscle_group === filter)
+    .filter(ex => !q || ex.name.toLowerCase().includes(q))
+    .sort((a, b) => (b.last_trained ? new Date(b.last_trained) : 0) - (a.last_trained ? new Date(a.last_trained) : 0));
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-4xl mx-auto">
-      <header className="mb-6">
-        <h1 className="font-display text-3xl md:text-4xl font-bold text-iron-100 tracking-wide">
-          Fortschritt
-        </h1>
-        <p className="text-iron-500 mt-1">Verfolge deine Entwicklung bei jeder Übung</p>
-      </header>
+      <PageHeader title="Fortschritt" subtitle="Deine Entwicklung über Zeit" />
 
-      <div className="grid gap-6 mb-8">
+      <div className="grid gap-4 md:gap-6 mb-8">
         <TrainingCalendar />
         <WeeklyVolumeChart />
       </div>
 
-      <h2 className="section-title text-iron-400 text-sm mb-3">Übungen</h2>
-
-      {/* Filter */}
-      <div className="mb-6 flex flex-wrap gap-2">
-        {muscleGroups.map(group => (
-          <button
-            key={group}
-            onClick={() => setFilter(group)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              filter === group
-                ? 'bg-rust-500 text-white'
-                : 'bg-iron-800 text-iron-400 hover:bg-iron-700'
-            }`}
-          >
-            {group}
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h2 className="section-title text-iron-400 text-sm">Übungen</h2>
+        {trainedCount < exercises.length && (
+          <button onClick={() => { setShowUntrained(v => !v); setFilter('Alle'); }} className="text-sm text-rust-400 hover:text-rust-300">
+            {showUntrained ? 'Nur trainierte' : `Alle ${exercises.length} zeigen`}
           </button>
-        ))}
+        )}
       </div>
 
-      {/* Exercise Progress Cards */}
+      {pool.length > 0 && (
+        <>
+          <div className="relative mb-3">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-iron-500" />
+            <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Übung suchen…" className="input-field w-full pl-10" />
+          </div>
+          <div className="mb-4 -mx-4 px-4 flex gap-2 overflow-x-auto no-scrollbar">
+            {muscleGroups.map(group => (
+              <button key={group} onClick={() => setFilter(group)} className={`chip ${filter === group ? 'chip-active' : 'chip-idle'}`}>
+                {group}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
       <div className="space-y-3">
         {filteredExercises.map(exercise => (
           <ExerciseProgressCard key={exercise.id} exercise={exercise} />
@@ -261,8 +266,10 @@ export default function Progress() {
       </div>
 
       {filteredExercises.length === 0 && (
-        <div className="text-center py-12 bg-iron-900 rounded-xl">
-          <p className="text-iron-500">Keine Übungen in dieser Kategorie</p>
+        <div className="card">
+          {pool.length === 0
+            ? <EmptyState icon={TrendingUp} title="Noch keine Daten" text="Sobald du Sätze abhakst, erscheinen deine Übungen hier mit Verlauf und Rekorden." />
+            : <EmptyState icon={Search} text="Keine passende Übung" />}
         </div>
       )}
     </div>

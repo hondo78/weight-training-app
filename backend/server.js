@@ -29,9 +29,17 @@ app.get('/api/health', async (req, res) => {
 // Get all exercises
 app.get('/api/exercises', async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM exercises ORDER BY muscle_group, name'
-    );
+    // set_count/last_trained: nur echte Sätze (reps > 0), für Sortierung und Fortschrittsansicht
+    const result = await pool.query(`
+      SELECT e.*,
+             COUNT(el.id)::int AS set_count,
+             MAX(ws.session_date) AS last_trained
+      FROM exercises e
+      LEFT JOIN exercise_logs el ON el.exercise_id = e.id AND el.reps > 0
+      LEFT JOIN workout_sessions ws ON ws.id = el.session_id
+      GROUP BY e.id
+      ORDER BY e.muscle_group, e.name
+    `);
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -70,9 +78,13 @@ app.post('/api/exercises', async (req, res) => {
 // Get all workout plans
 app.get('/api/plans', async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM workout_plans ORDER BY name'
-    );
+    const result = await pool.query(`
+      SELECT wp.*,
+             (SELECT COUNT(*)::int FROM plan_exercises pe WHERE pe.plan_id = wp.id) AS exercise_count,
+             (SELECT MAX(ws.session_date) FROM workout_sessions ws WHERE ws.plan_id = wp.id) AS last_used
+      FROM workout_plans wp
+      ORDER BY wp.name
+    `);
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -197,9 +209,13 @@ app.delete('/api/plans/:id', async (req, res) => {
 app.get('/api/sessions', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT ws.*, wp.name as plan_name
+      SELECT ws.*, wp.name as plan_name,
+             COUNT(el.id)::int AS set_count,
+             COALESCE(SUM(el.weight_kg * el.reps), 0) AS volume_kg
       FROM workout_sessions ws
       LEFT JOIN workout_plans wp ON ws.plan_id = wp.id
+      LEFT JOIN exercise_logs el ON el.session_id = ws.id AND el.reps > 0
+      GROUP BY ws.id, wp.name
       ORDER BY ws.session_date DESC, ws.started_at DESC
       LIMIT 50
     `);

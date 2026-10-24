@@ -16,10 +16,16 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
   margin: 0;
   padding: 0;
   background-color: var(--bg-primary);
+  background-image: radial-gradient(1200px 500px at 50% -200px, rgba(212, 98, 44, 0.07), transparent);
+  background-attachment: fixed;
   color: var(--text-primary);
   font-family: 'Source Sans 3', sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -68,6 +74,11 @@ input[type="number"] {
   }
 }
 
+@keyframes sheetUp {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -84,6 +95,10 @@ input[type="number"] {
 
 .animate-slide-up {
   animation: slideUp 0.4s ease-out forwards;
+}
+
+.animate-sheet-up {
+  animation: sheetUp 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
 
 .animate-fade-in {
@@ -111,18 +126,81 @@ input[type="number"] {
   box-shadow: 0 8px 30px -12px rgba(0, 0, 0, 0.5);
 }
 
-/* Button styles */
-.btn-primary {
-  @apply bg-rust-500 hover:bg-rust-600 text-white font-medium px-4 py-2 rounded-lg transition-all duration-200;
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
-.btn-secondary {
-  @apply bg-iron-700 hover:bg-iron-600 text-iron-100 font-medium px-4 py-2 rounded-lg transition-all duration-200;
+/* Tastaturfokus sichtbar, Mausklicks ohne Ring */
+:focus-visible {
+  outline: 2px solid #e07b4a;
+  outline-offset: 2px;
 }
 
-/* Input styles */
-.input-field {
-  @apply bg-iron-800 border border-iron-600 text-iron-100 rounded-lg px-3 py-2 focus:outline-none focus:border-rust-500 focus:ring-1 focus:ring-rust-500 transition-all duration-200;
+@layer components {
+  /* Karten-Oberfläche: einheitlicher Hintergrund mit dezenter Kontur */
+  .surface {
+    @apply bg-iron-900 border border-white/[0.06];
+  }
+
+  .card {
+    @apply bg-iron-900 border border-white/[0.06] rounded-2xl;
+  }
+
+  /* iPhone Home-Indikator */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Button styles */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 bg-rust-500 hover:bg-rust-600 active:bg-rust-600 text-white font-medium px-4 py-2.5 rounded-xl transition-all duration-200 shadow-lg shadow-rust-900/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 bg-iron-800 hover:bg-iron-700 active:bg-iron-700 text-iron-100 font-medium px-4 py-2.5 rounded-xl border border-white/[0.06] transition-all duration-200 disabled:opacity-50;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium px-4 py-2.5 rounded-xl transition-all duration-200;
+  }
+
+  .icon-btn {
+    @apply inline-flex items-center justify-center w-10 h-10 rounded-xl text-iron-400 hover:text-iron-100 hover:bg-iron-800 active:bg-iron-700 transition-colors;
+  }
+
+  .chip {
+    @apply px-3.5 py-2 rounded-full text-sm font-medium transition-colors border whitespace-nowrap;
+  }
+
+  .chip-active {
+    @apply bg-rust-500 border-rust-500 text-white;
+  }
+
+  .chip-idle {
+    @apply bg-iron-900 border-white/[0.08] text-iron-300 hover:bg-iron-800;
+  }
+
+  /* Input styles */
+  .input-field {
+    @apply bg-iron-800 border border-iron-700 text-iron-100 placeholder:text-iron-500 rounded-xl px-3 py-2.5 focus:outline-none focus:border-rust-500 focus:ring-1 focus:ring-rust-500 transition-all duration-200;
+  }
+
+  /* Eingaben im Satz-Raster: groß genug für Daumen */
+  .set-input {
+    @apply w-full min-w-0 bg-iron-800 border border-transparent text-iron-50 text-center text-lg font-mono rounded-lg h-11 placeholder:text-iron-600 focus:outline-none focus:border-rust-500 focus:bg-iron-950 transition-colors;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
 }
 
 /* Metric display */

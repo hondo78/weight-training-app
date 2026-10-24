@@ -70,9 +70,9 @@ export default function RestTimer({ timer, onChange, onClose }) {
   };
 
   return (
-    <div className="fixed left-0 right-0 bottom-20 md:bottom-4 md:left-20 lg:left-64 z-40 px-4 pointer-events-none">
-      <div className={`max-w-4xl mx-auto rounded-xl overflow-hidden shadow-2xl pointer-events-auto border ${
-        finished ? 'bg-rust-600 border-rust-400' : 'bg-iron-900 border-iron-700'
+    <div className="fixed left-0 right-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-4 md:left-20 lg:left-64 z-40 px-4 pointer-events-none">
+      <div className={`max-w-3xl mx-auto rounded-2xl overflow-hidden shadow-2xl shadow-black/50 pointer-events-auto border backdrop-blur-md animate-slide-up ${
+        finished ? 'bg-rust-600 border-rust-400' : 'bg-iron-900/95 border-white/10'
       }`}>
         <div className="flex items-center gap-3 p-3">
           <Hourglass className={`w-5 h-5 shrink-0 ${finished ? 'text-white' : 'text-rust-400'}`} />
@@ -80,14 +80,14 @@ export default function RestTimer({ timer, onChange, onClose }) {
             <p className={`text-xs truncate ${finished ? 'text-white/80' : 'text-iron-400'}`}>
               {finished ? 'Pause vorbei – nächster Satz!' : `Pause · ${timer.label}`}
             </p>
-            <p className="metric-value text-2xl text-white leading-tight">{format(remaining)}</p>
+            <p className="metric-value text-3xl text-white leading-tight">{format(remaining)}</p>
           </div>
           {!finished && (
             <>
-              <button onClick={() => adjust(-15)} className="px-3 py-2 rounded-lg bg-iron-800 hover:bg-iron-700 text-iron-200 text-sm font-mono">
+              <button onClick={() => adjust(-15)} className="h-11 px-3 rounded-xl bg-iron-800 hover:bg-iron-700 active:bg-iron-700 text-iron-200 text-sm font-mono">
                 −15
               </button>
-              <button onClick={() => adjust(15)} className="px-3 py-2 rounded-lg bg-iron-800 hover:bg-iron-700 text-iron-200 text-sm font-mono">
+              <button onClick={() => adjust(15)} className="h-11 px-3 rounded-xl bg-iron-800 hover:bg-iron-700 active:bg-iron-700 text-iron-200 text-sm font-mono">
                 +15
               </button>
             </>
