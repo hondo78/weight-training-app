@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Plus, Search, Dumbbell } from 'lucide-react';
+import { Plus, Search, Dumbbell, BookOpen } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Modal, PageHeader, Spinner, EmptyState, useFeedback } from '../components/ui';
+import ExerciseGuide from '../components/ExerciseGuide';
 
 const API_BASE = '/api';
 
@@ -14,7 +15,7 @@ const MUSCLE_GROUPS = [
   'Core'
 ];
 
-function ExerciseCard({ exercise }) {
+function ExerciseCard({ exercise, onOpenGuide }) {
   return (
     <div className="card p-4">
       <div className="flex items-start gap-3">
@@ -31,6 +32,15 @@ function ExerciseCard({ exercise }) {
           {exercise.description && (
             <p className="text-iron-400 text-sm mt-2">{exercise.description}</p>
           )}
+          <button
+            onClick={() => onOpenGuide(exercise)}
+            className={`mt-3 inline-flex items-center gap-1.5 text-sm transition-colors ${
+              exercise.instructions ? 'text-rust-400 hover:text-rust-300' : 'text-iron-500 hover:text-iron-300'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            {exercise.instructions ? 'Ausführung' : 'Ausführung hinzufügen'}
+          </button>
         </div>
       </div>
     </div>
@@ -115,6 +125,7 @@ export default function Exercises() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGroup, setSelectedGroup] = useState('Alle');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [guideExercise, setGuideExercise] = useState(null);
 
   useEffect(() => {
     async function loadExercises() {
@@ -173,7 +184,7 @@ export default function Exercises() {
         <section key={group} className="mb-6">
           <h2 className="section-title text-iron-400 text-sm mb-3">{group} <span className="text-iron-600">· {exs.length}</span></h2>
           <div className="grid gap-3 sm:grid-cols-2">
-            {exs.map(ex => <ExerciseCard key={ex.id} exercise={ex} />)}
+            {exs.map(ex => <ExerciseCard key={ex.id} exercise={ex} onOpenGuide={setGuideExercise} />)}
           </div>
         </section>
       ))}
@@ -186,6 +197,15 @@ export default function Exercises() {
             action={searchQuery && <button onClick={() => setShowAddModal(true)} className="btn-secondary"><Plus className="w-4 h-4" /> „{searchQuery}“ anlegen</button>}
           />
         </div>
+      )}
+
+      {guideExercise && (
+        <ExerciseGuide
+          exerciseId={guideExercise.id}
+          name={guideExercise.name}
+          onClose={() => setGuideExercise(null)}
+          onSaved={(updated) => setExercises(list => list.map(ex => ex.id === updated.id ? { ...ex, ...updated } : ex))}
+        />
       )}
 
       {showAddModal && (

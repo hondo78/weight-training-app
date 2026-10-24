@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Play, Plus, Check, Trash2, Timer, ChevronDown, X, Sparkles, WifiOff, RotateCcw,
-  Info, Minus, Flag, Dumbbell, CalendarDays, Trophy
+  Info, Minus, Flag, Dumbbell, CalendarDays, Trophy, BookOpen
 } from 'lucide-react';
 import RestTimer, { unlockAudio } from '../components/RestTimer';
 import ExercisePicker from '../components/ExercisePicker';
+import ExerciseGuide from '../components/ExerciseGuide';
 import { PageHeader, Spinner, EmptyState, useFeedback } from '../components/ui';
 import useWakeLock from '../hooks/useWakeLock';
 import { putWithRetry, subscribe, pendingCount } from '../lib/syncQueue';
@@ -160,6 +161,7 @@ function SetRow({ set, index, previous, placeholder, onSave }) {
 function ExerciseCard({ exercise, logs, sessionId, expanded, onToggle, onSaveSet, onAddSet, onRemoveLastSet, onRemoveExercise, cardRef }) {
   const [stats, setStats] = useState(null);
   const [showRpeInfo, setShowRpeInfo] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const doneCount = logs.filter(isDone).length;
   const complete = logs.length > 0 && doneCount === logs.length;
 
@@ -211,23 +213,29 @@ function ExerciseCard({ exercise, logs, sessionId, expanded, onToggle, onSaveSet
 
   return (
     <div ref={cardRef} className={`card overflow-hidden scroll-mt-40 transition-colors ${complete && !expanded ? 'opacity-70' : ''}`}>
-      <button onClick={onToggle} className="w-full flex items-center gap-3 p-4 text-left hover:bg-iron-800/40 transition-colors">
-        <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
-          complete ? 'bg-emerald-500 text-white' : 'bg-iron-800 text-rust-400'
-        }`}>
-          {complete
-            ? <Check className="w-5 h-5" strokeWidth={3} />
-            : <span className="font-mono font-bold text-sm">{doneCount}/{logs.length}</span>}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-iron-50 font-semibold truncate">{exercise.name}</p>
-          <p className="text-iron-500 text-sm truncate">
-            {exercise.muscle_group}
-            {exercise.target_reps && <> · Ziel {logs.length}×{exercise.target_reps}</>}
-          </p>
-        </div>
-        <ChevronDown className={`w-5 h-5 text-iron-400 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-      </button>
+      <div className="flex items-center hover:bg-iron-800/40 transition-colors">
+        <button onClick={onToggle} className="flex-1 min-w-0 flex items-center gap-3 p-4 pr-2 text-left">
+          <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+            complete ? 'bg-emerald-500 text-white' : 'bg-iron-800 text-rust-400'
+          }`}>
+            {complete
+              ? <Check className="w-5 h-5" strokeWidth={3} />
+              : <span className="font-mono font-bold text-sm">{doneCount}/{logs.length}</span>}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-iron-50 font-semibold truncate">{exercise.name}</p>
+            <p className="text-iron-500 text-sm truncate">
+              {exercise.muscle_group}
+              {exercise.target_reps && <> · Ziel {logs.length}×{exercise.target_reps}</>}
+            </p>
+          </div>
+          <ChevronDown className={`w-5 h-5 text-iron-400 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </button>
+        <button onClick={() => setShowGuide(true)} className="icon-btn mr-2 shrink-0" title="Ausführung anzeigen" aria-label={`Ausführung von ${exercise.name} anzeigen`}>
+          <BookOpen className="w-5 h-5" />
+        </button>
+      </div>
+      {showGuide && <ExerciseGuide exerciseId={exercise.id} name={exercise.name} onClose={() => setShowGuide(false)} />}
 
       {expanded && (
         <div className="px-2 sm:px-4 pb-4">

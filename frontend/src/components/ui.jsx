@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { X, CheckCircle2, AlertTriangle, Info } from 'lucide-react';
+import { createPortal } from 'react-dom';
 
 // ============ Layout ============
 
@@ -53,7 +54,8 @@ export function Modal({ title, onClose, children, footer, size = 'md' }) {
 
   const width = size === 'sm' ? 'md:max-w-sm' : size === 'lg' ? 'md:max-w-2xl' : 'md:max-w-lg';
 
-  return (
+  // Portal: sonst würde ein transformierter Vorfahre (z. B. Karten-Animation) das fixed-Overlay einsperren
+  return createPortal(
     <div
       className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-end md:items-center justify-center md:p-4 animate-fade-in"
       onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}
@@ -74,7 +76,8 @@ export function Modal({ title, onClose, children, footer, size = 'md' }) {
         <div className="overflow-y-auto flex-1 min-h-0">{children}</div>
         {footer && <div className="px-5 py-4 border-t border-iron-800 flex gap-3">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

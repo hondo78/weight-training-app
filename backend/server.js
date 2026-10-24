@@ -61,13 +61,40 @@ app.get('/api/exercises/muscle/:group', async (req, res) => {
 
 // Add new exercise
 app.post('/api/exercises', async (req, res) => {
-  const { name, muscle_group, description } = req.body;
+  const { name, muscle_group, description, instructions } = req.body;
   try {
     const result = await pool.query(
-      'INSERT INTO exercises (name, muscle_group, description) VALUES ($1, $2, $3) RETURNING *',
-      [name, muscle_group, description]
+      'INSERT INTO exercises (name, muscle_group, description, instructions) VALUES ($1, $2, $3, $4) RETURNING *',
+      [name, muscle_group, description, instructions || null]
     );
     res.status(201).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single exercise (inkl. Ausführungsbeschreibung)
+app.get('/api/exercises/:id', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM exercises WHERE id = $1', [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Exercise not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update exercise: nur mitgeschickte Felder werden geändert
+app.put('/api/exercises/:id', async (req, res) => {
+  const fields = ['name', 'muscle_group', 'description', 'instructions'].filter(f => f in req.body);
+  if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  try {
+    const result = await pool.query(
+      `UPDATE exercises SET ${fields.map((f, i) => `${f} = $${i + 1}`).join(', ')} WHERE id = $${fields.length + 1} RETURNING *`,
+      [...fields.map(f => req.body[f]), req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Exercise not found' });
+    res.json(result.rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
