@@ -32,7 +32,7 @@ There are no tests and no linter.
 
 ### Domain model
 
-`workout_plans` → `plan_exercises` (target sets/reps/rest, `order_index`) → `exercises`. `exercises.description` is a one-line subtitle; `exercises.instructions` is the editable how-to text (lines like `Ausführung: …` render as sections, `Rücken: …` as a highlighted back-safety note). The seed texts are an `UPDATE … FROM (VALUES …)` block at the end of `init.sql`. A `workout_sessions` row optionally references a plan (`ON DELETE SET NULL`) and owns `exercise_logs` (one row per set: weight, reps, rpe 1–10).
+`workout_plans` → `plan_exercises` (target sets/reps/rest, `order_index`) → `exercises`. `exercises.description` is a one-line subtitle; `exercises.instructions` is the editable how-to text (lines like `Ausführung: …` render as sections, `Rücken: …` as a highlighted back-safety note). `GET /api/exercises` returns only a `has_instructions` flag; the text comes from `GET /api/exercises/:id`. The seed texts are an `UPDATE … FROM (VALUES …)` block at the end of `init.sql`. A `workout_sessions` row optionally references a plan (`ON DELETE SET NULL`) and owns `exercise_logs` (one row per set: weight, reps, rpe 1–10).
 
 Session lifecycle details that span backend and `Workout.jsx`:
 - `POST /api/sessions` with a `plan_id` pre-creates placeholder sets (`weight_kg=0, reps=0`, `target_sets` per exercise, default 3) inside the same transaction. Queries for history/records/stats should account for these zero-value rows.

@@ -30,8 +30,10 @@ app.get('/api/health', async (req, res) => {
 app.get('/api/exercises', async (req, res) => {
   try {
     // set_count/last_trained: nur echte Sätze (reps > 0), für Sortierung und Fortschrittsansicht
+    // has_instructions statt des vollen Texts: die Beschreibung lädt ExerciseGuide einzeln
     const result = await pool.query(`
-      SELECT e.*,
+      SELECT e.id, e.name, e.muscle_group, e.description, e.created_at,
+             COALESCE(TRIM(e.instructions), '') <> '' AS has_instructions,
              COUNT(el.id)::int AS set_count,
              MAX(ws.session_date) AS last_trained
       FROM exercises e
@@ -73,8 +75,12 @@ app.post('/api/exercises', async (req, res) => {
   }
 });
 
-// Get single exercise (inkl. Ausführungsbeschreibung)
+// IDs aus der URL: nur positive Ganzzahlen, sonst 404 statt Postgres-Fehler
+const parseId = (value) => (/^\d+$/.test(value) ? parseInt(value, 10) : null);
+
+// Einzelne Übung inkl. Ausführungsbeschreibung
 app.get('/api/exercises/:id', async (req, res) => {
+  if (parseId(req.params.id) === null) return res.status(404).json({ error: 'Exercise not found' });
   try {
     const result = await pool.query('SELECT * FROM exercises WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Exercise not found' });
@@ -84,18 +90,36 @@ app.get('/api/exercises/:id', async (req, res) => {
   }
 });
 
-// Update exercise: nur mitgeschickte Felder werden geändert
+// Übung ändern: nur mitgeschickte Felder werden geändert
 app.put('/api/exercises/:id', async (req, res) => {
-  const fields = ['name', 'muscle_group', 'description', 'instructions'].filter(f => f in req.body);
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(404).json({ error: 'Exercise not found' });
+
+  const values = {};
+  for (const field of ['name', 'muscle_group']) {
+    if (!(field in req.body)) continue;
+    const value = typeof req.body[field] === 'string' ? req.body[field].trim() : '';
+    if (!value) return res.status(400).json({ error: `${field} must be a non-empty string` });
+    values[field] = value;
+  }
+  for (const field of ['description', 'instructions']) {
+    if (!(field in req.body)) continue;
+    const value = req.body[field];
+    if (value !== null && typeof value !== 'string') return res.status(400).json({ error: `${field} must be a string or null` });
+    values[field] = value?.trim() || null;
+  }
+
+  const fields = Object.keys(values);
   if (fields.length === 0) return res.status(400).json({ error: 'No fields to update' });
   try {
     const result = await pool.query(
       `UPDATE exercises SET ${fields.map((f, i) => `${f} = $${i + 1}`).join(', ')} WHERE id = $${fields.length + 1} RETURNING *`,
-      [...fields.map(f => req.body[f]), req.params.id]
+      [...fields.map(f => values[f]), id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Exercise not found' });
     res.json(result.rows[0]);
   } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'An exercise with this name already exists' });
     res.status(500).json({ error: error.message });
   }
 });

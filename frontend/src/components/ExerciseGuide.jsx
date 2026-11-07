@@ -4,18 +4,21 @@ import { Modal, Spinner, useFeedback } from './ui';
 
 const API_BASE = '/api';
 
+// Abschnittsüberschrift: nur Buchstaben am Zeilenanfang, dann „: “ – so bleiben „Pause 1:30“ oder „https://…“ normaler Text
+const HEADING = /^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß \-]{1,29}):(?:\s+(.*))?$/;
+
 // Abschnittsüberschriften wie „Ausführung:“ am Zeilenanfang hervorheben
 function GuideText({ text }) {
   return (
     <div className="space-y-3 text-iron-200 leading-relaxed">
-      {text.split('\n').filter(line => line.trim()).map((line, i) => {
-        const match = line.match(/^([^:]{2,30}):\s*(.*)$/);
+      {text.split(/\r?\n/).filter(line => line.trim()).map((line, i) => {
+        const match = line.trim().match(HEADING);
         if (!match) return <p key={i}>{line}</p>;
         const isBack = match[1].trim().toLowerCase() === 'rücken';
         return (
           <p key={i} className={isBack ? 'p-3 rounded-xl bg-amber-500/10 border border-amber-500/25' : ''}>
             <span className={`block text-xs uppercase tracking-wider mb-0.5 ${isBack ? 'text-amber-400' : 'text-rust-400'}`}>{match[1]}</span>
-            {match[2]}
+            {match[2] || ''}
           </p>
         );
       })}
@@ -26,28 +29,47 @@ function GuideText({ text }) {
 // Ausführungsbeschreibung einer Übung anzeigen und bearbeiten.
 // onSaved(exercise) bekommt die aktualisierte Übung vom Server.
 export default function ExerciseGuide({ exerciseId, name, onClose, onSaved }) {
-  const { toast } = useFeedback();
+  const { toast, confirm } = useFeedback();
   const [exercise, setExercise] = useState(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    // Antworten eines bereits geschlossenen oder gewechselten Fensters ignorieren
+    let cancelled = false;
     (async () => {
       try {
         const res = await fetch(`${API_BASE}/exercises/${exerciseId}`);
         if (!res.ok) throw new Error(res.statusText);
         const data = await res.json();
+        if (cancelled) return;
         setExercise(data);
         setDraft(data.instructions || '');
         if (!data.instructions) setEditing(true);
       } catch (error) {
+        if (cancelled) return;
         console.error('Error loading exercise:', error);
         toast('Übung konnte nicht geladen werden', 'error');
         onClose();
       }
     })();
+    return () => { cancelled = true; };
   }, [exerciseId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dirty = editing && draft.trim() !== (exercise?.instructions || '').trim();
+
+  // Escape, Tipp neben das Fenster und X: ungespeicherte Änderungen nicht stillschweigend verwerfen
+  const requestClose = async () => {
+    if (dirty && !(await confirm({
+      title: 'Änderungen verwerfen?',
+      message: 'Die Beschreibung wurde noch nicht gespeichert.',
+      confirmLabel: 'Verwerfen',
+      cancelLabel: 'Weiter bearbeiten',
+      danger: true
+    }))) return;
+    onClose();
+  };
 
   const save = async () => {
     setSaving(true);
@@ -78,7 +100,7 @@ export default function ExerciseGuide({ exerciseId, name, onClose, onSaved }) {
 
   const footer = !exercise ? null : editing ? (
     <>
-      <button onClick={exercise.instructions ? cancelEdit : onClose} className="btn-secondary flex-1">Abbrechen</button>
+      <button onClick={exercise.instructions ? cancelEdit : requestClose} className="btn-secondary flex-1">Abbrechen</button>
       <button onClick={save} disabled={saving} className="btn-primary flex-1">{saving ? 'Speichert…' : 'Speichern'}</button>
     </>
   ) : (
@@ -89,7 +111,7 @@ export default function ExerciseGuide({ exerciseId, name, onClose, onSaved }) {
   );
 
   return (
-    <Modal title={name || exercise?.name || 'Übung'} onClose={onClose} footer={footer}>
+    <Modal title={name || exercise?.name || 'Übung'} onClose={requestClose} footer={footer}>
       <div className="p-5">
         {!exercise ? (
           <Spinner />

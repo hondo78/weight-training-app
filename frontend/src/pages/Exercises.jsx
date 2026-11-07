@@ -35,11 +35,11 @@ function ExerciseCard({ exercise, onOpenGuide }) {
           <button
             onClick={() => onOpenGuide(exercise)}
             className={`mt-3 inline-flex items-center gap-1.5 text-sm transition-colors ${
-              exercise.instructions ? 'text-rust-400 hover:text-rust-300' : 'text-iron-500 hover:text-iron-300'
+              exercise.has_instructions ? 'text-rust-400 hover:text-rust-300' : 'text-iron-500 hover:text-iron-300'
             }`}
           >
             <BookOpen className="w-4 h-4" />
-            {exercise.instructions ? 'Ausführung' : 'Ausführung hinzufügen'}
+            {exercise.has_instructions ? 'Ausführung' : 'Ausführung hinzufügen'}
           </button>
         </div>
       </div>
@@ -204,7 +204,7 @@ export default function Exercises() {
           exerciseId={guideExercise.id}
           name={guideExercise.name}
           onClose={() => setGuideExercise(null)}
-          onSaved={(updated) => setExercises(list => list.map(ex => ex.id === updated.id ? { ...ex, ...updated } : ex))}
+          onSaved={(updated) => setExercises(list => list.map(ex => ex.id === updated.id ? { ...ex, has_instructions: Boolean(updated.instructions) } : ex))}
         />
       )}
 

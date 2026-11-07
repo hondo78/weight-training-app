@@ -114,7 +114,8 @@ INSERT INTO exercises (name, muscle_group, description) VALUES
 ('Crunches', 'Core', 'Klassische Bauchübung'),
 ('Beinheben', 'Core', 'Für den unteren Bauch'),
 ('Russian Twists', 'Core', 'Für die seitlichen Bauchmuskeln'),
-('Ab Wheel Rollout', 'Core', 'Fortgeschrittene Core-Übung');
+('Ab Wheel Rollout', 'Core', 'Fortgeschrittene Core-Übung'),
+('Bird Dog', 'Core', 'Rückenschonende Rumpfstabilisation im Vierfüßlerstand');
 
 -- Create some example workout plans
 INSERT INTO workout_plans (name, description) VALUES

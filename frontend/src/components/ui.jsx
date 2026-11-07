@@ -40,17 +40,30 @@ export function EmptyState({ icon: Icon, title, text, action }) {
 // ============ Modal ============
 
 // Mobil als Bottom-Sheet, ab md zentriert. Schließt per Escape und Klick auf den Hintergrund.
+// Offene Modals (oberstes zuletzt): Escape schließt nur das oberste, z. B. einen Bestätigungsdialog über einem Fenster
+const modalStack = [];
+
 export function Modal({ title, onClose, children, footer, size = 'md' }) {
+  // onClose in einer Ref halten: Eltern übergeben oft Inline-Funktionen und rendern sekündlich (Trainings-Timer)
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const close = useCallback(() => onCloseRef.current?.(), []);
+
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose?.();
+    const token = {};
+    modalStack.push(token);
+    const onKey = (e) => {
+      if (e.key === 'Escape' && modalStack[modalStack.length - 1] === token) onCloseRef.current?.();
+    };
     document.addEventListener('keydown', onKey);
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
+      modalStack.splice(modalStack.indexOf(token), 1);
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = overflow;
     };
-  }, [onClose]);
+  }, []);
 
   const width = size === 'sm' ? 'md:max-w-sm' : size === 'lg' ? 'md:max-w-2xl' : 'md:max-w-lg';
 
@@ -58,7 +71,7 @@ export function Modal({ title, onClose, children, footer, size = 'md' }) {
   return createPortal(
     <div
       className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-end md:items-center justify-center md:p-4 animate-fade-in"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}
+      onMouseDown={(e) => e.target === e.currentTarget && close()}
     >
       <div
         role="dialog"
@@ -68,7 +81,7 @@ export function Modal({ title, onClose, children, footer, size = 'md' }) {
         {title && (
           <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-iron-800">
             <h3 className="font-display text-lg tracking-wide text-iron-50">{title}</h3>
-            <button onClick={onClose} className="icon-btn -mr-2" aria-label="Schließen">
+            <button onClick={close} className="icon-btn -mr-2" aria-label="Schließen">
               <X className="w-5 h-5" />
             </button>
           </div>
